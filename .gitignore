@@ -2,6 +2,7 @@
 # apply-confirm flag live here. Committing the confirm flag would be a genuine footgun.
 .claude/state/
 .claude/settings.local.json
+.claude/worktrees/
 
 # Terraform
 *.tfstate
