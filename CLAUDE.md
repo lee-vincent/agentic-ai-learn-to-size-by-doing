@@ -1,17 +1,19 @@
 # Project: GPU/HPC Sizing Lab — Loop-Engineered Build
 
 ## Objective
-Deploy a real multi-node, multi-GPU serving stack (vLLM + NVIDIA NIM) and a real agentic AI
-client on AWS EC2, generate synthetic load, and measure how CPU/RAM/GPU/VRAM utilization and
-inference-quality metrics (ITL, TPS, latency-per-output-token, TAT) respond as hardware and
-software knobs change. Full spec — metrics, knobs, deliverables — lives in `SPEC.md`. Don't
-re-derive it; read it.
+Deploy a real multi-node, multi-GPU vLLM serving stack and a real agentic AI client on AWS EC2,
+generate synthetic load, and measure how CPU/RAM/GPU/VRAM utilization and inference-quality
+metrics (TTFT, ITL, TPS, latency-per-output-token, TAT, KV cache hit rate) respond as hardware and
+software knobs change. Full spec — metrics, knobs, model lineup, deliverables — lives in
+`SPEC.md`. Don't re-derive it; read it.
 
 ## Scope decisions — already made, do not re-ask
 - Parallelism: multi-GPU, **multi-node**. Must exercise data, tensor, pipeline, AND expert
-  parallel (expert parallel requires one MoE model in the model lineup).
-- Serving frameworks: **vLLM and NVIDIA NIM**, both behind a common OpenAI-compatible interface,
-  so the load generator and agent can target either interchangeably.
+  parallel (expert parallel is exercised via the two MoE models in the lineup — see `SPEC.md`).
+- Serving framework: **vLLM only**, behind an OpenAI-compatible interface. NVIDIA NIM was in an
+  earlier draft of this project and has been dropped to simplify the build.
+- Model lineup: Qwen3.6-27B (dense), Qwen3.5-35B-A3B (small MoE), Qwen3.5-397B-A17B (flagship
+  MoE) — see `SPEC.md` for why these three specifically.
 - Cost posture: no hard spend cap, no automatic cluster shutdown. But every cost-incurring or
   destructive action is gated behind explicit human confirmation (see Guardrails), and cost
   visibility is mandatory every session.
@@ -31,7 +33,7 @@ re-derive it; read it.
 | Subagent | Owns | Runs in worktree |
 |---|---|---|
 | `infra-builder` | `infra/` — Terraform: networking, compute, storage, IAM/secrets | yes |
-| `serving-builder` | `containers/vllm/`, `containers/nim/` | yes |
+| `serving-builder` | `containers/vllm/` — one image, parameterized by model + parallelism | yes |
 | `agent-builder` | `agent/` — the custom tool-calling agent | yes |
 | `loadgen-builder` | `loadgen/` — genai-perf configs + agent-driven load harness | yes |
 | `monitoring-builder` | `monitoring/` — Prometheus/Grafana/DCGM/Node Exporter | yes |

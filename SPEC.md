@@ -5,58 +5,90 @@
 - CPU RAM Utilization
 - GPU Utilization
 - GPU VRAM Utilization
-- Time to first token (TTFT)
+- Time to First Token (TTFT)
 - Inter-Token Latency (ITL): time between generating consecutive tokens
 - Tokens Per Second (TPS): total throughput speed
-- Requests per second
-- KV Cache hit rate
+- Requests Per Second
+- KV Cache Hit Rate
 - Latency Per Output Token: total generation time divided by total output tokens
-- Turnaround Time (TAT): total clock time from user submission to final token delivery
-- average input and output length
-- reasoning level
+- Turnaround Time (TAT): total clock time from user submission to final token delivery — measure
+  this at the client/agent layer, since it spans the full round trip including any agent
+  reasoning/tool steps, not just raw token generation
+- Average input and output length (observed per run, alongside the configured knob value)
+- Reasoning level / effort used (observed per run)
 
 ## `<knobs>`
-- Different LLMs with different parameter counts (small/medium/large + one MoE model)
+- Different LLMs with different parameter counts and architectures — see Model Lineup below
 - Parameter precision (FP8 down to INT4)
-- Serving framework (vLLM vs. NVIDIA NIM)
-- KV-cache management strategy (e.g. PagedAttention, prefix caching, chunked prefill, KV cache quantization)
+- KV-cache management strategy (PagedAttention, prefix caching, chunked prefill, KV cache
+  quantization)
 - Average input length and output length
 - Number of concurrent users
 - LLM parallelism: data parallel, tensor parallel, expert parallel, pipeline/model parallel
-- Decoding algorithm: greedy, parallel sampling, speculative decoding, beam search (confirm current support level for each in vLLM and NIM respectively — not all frameworks support all of these equally well)
-- Reasonsing level (effort): how much thinking each request demands
+- Decoding algorithm: greedy, parallel sampling, speculative decoding, beam search — confirm
+  current vLLM support level for each before assuming parity across the lineup
+- Reasoning level (effort): how much thinking each request demands — Qwen3.5/3.6's "thinking
+  mode" is the mechanism for this knob; test thinking on vs. off and, where the model exposes it,
+  different effort levels
+
+**Serving framework is no longer a knob** — this build is vLLM-only. An earlier draft compared
+vLLM against NVIDIA NIM; that comparison was dropped to simplify the build and avoid NIM's NGC
+licensing overhead. If you want it back later it's a clean re-addition: stand up a second
+`containers/nim/` service behind the same OpenAI-compatible interface.
+
+## Model lineup
+Three current Qwen models (all natively supported by vLLM), chosen to span parameter count,
+dense-vs-MoE architecture, and single-node-vs-true-multi-node infra:
+
+| Model | Architecture | Total / Active Params | Role in this lab |
+|---|---|---|---|
+| **Qwen3.6-27B** | Dense | 27B / 27B | Dense baseline, released April 2026 — the newest and strongest dense model in the family. No expert-routing variable in the mix, so it isolates the effect of precision, KV-cache strategy, and parallelism knobs from MoE routing behavior. Single-node, multi-GPU territory. |
+| **Qwen3.5-35B-A3B** | MoE | 35B / 3B | Small-scale MoE — 256 experts + 1 shared expert, only ~8.6% of total params active per token. This is the cheap end of the expert-parallel knob: real MoE routing behavior, but modest enough to iterate on quickly and to compare directly against the 27B dense model at similar total-parameter scale. |
+| **Qwen3.5-397B-A17B** | MoE | 397B / 17B | Flagship MoE, released Feb 2026. This is the model that actually forces the multi-node, full-parallelism build already scoped for this project — at 397B total parameters, even INT4 weights won't comfortably fit in a single 8-GPU node's VRAM budget, so tensor parallel within a node plus pipeline parallel across nodes both matter for real, not just as configuration options that happen to be set. |
+
+Two things to verify at build time rather than assume, since published third-party estimates
+vary in reliability:
+- The actual VRAM footprint of each model at each precision setting (FP8 vs. INT4 in particular)
+  — check the current official model card and vLLM's own memory estimation rather than a
+  third-party blog figure.
+- Whether pre-quantized checkpoints (AWQ/GPTQ/FP8) are already published for each model on
+  Hugging Face, or whether `serving-builder` needs to quantize from the BF16 checkpoint itself.
 
 ## Architecture summary
 - **Infra**: Terraform, multi-node GPU cluster in a placement group, EFA where supported (verify
-  current instance-family support), shared FSx for Lustre or EFS for model weight caching.
-- **Serving**: vLLM (Ray-backed for multi-node tensor/pipeline/data parallel) and NVIDIA NIM
-  (NGC API key required — inject via Secrets Manager/SSM, never hardcode). Both expose an
-  OpenAI-compatible `/v1/chat/completions` endpoint. NIM's multi-node model-parallelism support is
-  more constrained than vLLM+Ray — keep the comparison fair, don't force NIM somewhere it isn't
-  supported.
+  current instance-family support), shared FSx for Lustre or EFS for model weight caching —
+  important given the size of the 397B-A17B checkpoint.
+- **Serving**: vLLM only, Ray-backed for multi-node tensor/pipeline/data parallel. One
+  OpenAI-compatible `/v1/chat/completions` endpoint per model in the lineup, all launched from
+  the same container image with the model ID and parallelism config passed in as parameters —
+  not three separate container images to maintain.
 - **Agent**: a real tool-calling agent (at minimum a calculator tool and a retrieval/lookup tool)
-  targeting either backend, used both as a study subject and as an agentic-shaped load source.
+  targeting the vLLM endpoint, used both as a study subject and as an agentic-shaped load source.
 - **Load generation**: NVIDIA `genai-perf` for raw-endpoint knob-sweep benchmarking, plus a
   custom harness driving the agent itself for agentic-shaped traffic (multi-turn, variable output
   length, burstier concurrency) that `genai-perf` alone won't reproduce.
-- **Monitoring**: Prometheus + Grafana, DCGM Exporter (GPU), Node Exporter (CPU/RAM), vLLM/NIM
-  native Prometheus metrics, one dashboard combining all three metric families per experiment run.
+- **Monitoring**: Prometheus + Grafana, DCGM Exporter (GPU), Node Exporter (CPU/RAM), vLLM's
+  native Prometheus metrics (which cover TTFT, ITL, TPS, and KV cache hit rate directly), one
+  dashboard combining all metric families per experiment run.
 - **Experiment control**: a CLI that toggles each knob, applies the config, runs load for a fixed
   duration, scrapes the metrics window, and appends a tagged row to a results file (CSV/Parquet),
   plus a plotting script for post-sweep comparison.
 
 ## Deliverables checklist
 - [ ] Terraform modules: networking, multi-node GPU compute/cluster, shared storage, IAM/secrets
-- [ ] Container build files: vLLM, NIM, custom agent, load generators
-- [ ] Multi-node orchestration config (Ray or equivalent) for tensor/pipeline/data/expert parallel
+- [ ] Container build files: vLLM (parameterized by model + parallelism config), custom agent,
+  load generators
+- [ ] Multi-node orchestration config (Ray) for tensor/pipeline/data/expert parallel
 - [ ] Monitoring stack: Prometheus, Grafana (dashboard JSON), DCGM Exporter, Node Exporter
 - [ ] Experiment control CLI + structured results storage + comparison plotting
 - [ ] Cost visibility: running-instance/cost banner every session, notify-only billing alarm,
   single documented teardown command
-- [ ] README: prerequisites (AWS quota request, NGC API key), quickstart, how to run a sweep, how
-  to tear down, current approximate hourly cost for the instance types selected
+- [ ] README: prerequisites (AWS quota request, HuggingFace token if any lineup model is gated),
+  quickstart, how to run a sweep, how to tear down, current approximate hourly cost for the
+  instance types selected
 
 ## Verify while building, don't assume
 - Current EFA support and current on-demand pricing for the selected GPU instance family
-- Current NIM licensing/access requirements and which chosen models have NIM-optimized profiles
-- Whether any chosen model (e.g. Llama-family weights) needs a gated HuggingFace token
+- Actual VRAM footprint of each of the three lineup models at each precision setting, and whether
+  pre-quantized checkpoints already exist — check current model cards, not third-party estimates
+- Whether any lineup model requires a gated HuggingFace token
