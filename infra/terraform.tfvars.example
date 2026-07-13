@@ -1,0 +1,28 @@
+# Copy to terraform.tfvars (gitignored is NOT currently set for tfvars --
+# only secrets.tfvars/*.secret.tfvars are ignored, so don't put anything
+# sensitive in here) and adjust as needed. Every value below is also a
+# perfectly reasonable default on its own -- this file exists to make the
+# knobs discoverable, not because you must set them.
+
+aws_region = "us-east-1"
+project    = "gpu-sizing-lab"
+
+# --- GPU compute ---
+# Default is 2x p5.48xlarge (8x H100 80GB each, 640 GiB VRAM/node, 3200Gbps
+# EFA). See infra/README.md for why, current pricing, and current EFA
+# support. Bump gpu_node_count to 4 for DP=2 x PP=2 combos once Phase 2/3
+# are live; each extra p5.48xlarge node is ~$55/hr on-demand.
+gpu_instance_type = "p5.48xlarge"
+gpu_node_count    = 2
+
+# Leave empty to rely on SSM Session Manager (default). Only set this if you
+# specifically need direct SSH into the nodes.
+ssh_ingress_cidrs = []
+# ssh_ingress_cidrs = ["203.0.113.4/32"]
+
+# --- Shared storage ---
+# 2400 GiB comfortably holds the flagship model's FP8 (~378 GiB) + INT4
+# (~220 GiB) checkpoints plus both smaller lineup models at once. Bump if
+# you want the BF16 checkpoint (~751 GiB) cached too, or multiple models'
+# BF16 weights simultaneously.
+fsx_storage_capacity_gib = 2400
