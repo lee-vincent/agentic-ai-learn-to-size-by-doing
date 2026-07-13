@@ -5,25 +5,26 @@
 - CPU RAM Utilization
 - GPU Utilization
 - GPU VRAM Utilization
+- Time to first token (TTFT)
 - Inter-Token Latency (ITL): time between generating consecutive tokens
 - Tokens Per Second (TPS): total throughput speed
+- Requests per second
+- KV Cache hit rate
 - Latency Per Output Token: total generation time divided by total output tokens
-- Turnaround Time (TAT): total clock time from user submission to final token delivery — measure
-  this at the client/agent layer, since it spans the full round trip including any agent
-  reasoning/tool steps, not just raw token generation
+- Turnaround Time (TAT): total clock time from user submission to final token delivery
+- average input and output length
+- reasoning level
 
 ## `<knobs>`
-- Different LLMs with different parameter counts — small (~7–8B), medium (~13–14B), large (~70B),
-  plus one MoE model specifically to exercise expert parallelism
+- Different LLMs with different parameter counts (small/medium/large + one MoE model)
 - Parameter precision (FP8 down to INT4)
 - Serving framework (vLLM vs. NVIDIA NIM)
-- KV-cache management strategy (PagedAttention, prefix caching, chunked prefill, KV cache
-  quantization)
+- KV-cache management strategy (e.g. PagedAttention, prefix caching, chunked prefill, KV cache quantization)
 - Average input length and output length
 - Number of concurrent users
 - LLM parallelism: data parallel, tensor parallel, expert parallel, pipeline/model parallel
-- Decoding algorithm: greedy, parallel sampling, speculative decoding, beam search — confirm
-  current support level for each in vLLM and NIM respectively before assuming parity
+- Decoding algorithm: greedy, parallel sampling, speculative decoding, beam search (confirm current support level for each in vLLM and NIM respectively — not all frameworks support all of these equally well)
+- Reasonsing level (effort): how much thinking each request demands
 
 ## Architecture summary
 - **Infra**: Terraform, multi-node GPU cluster in a placement group, EFA where supported (verify
