@@ -15,6 +15,15 @@ You build `containers/vllm/`. Read `SPEC.md` first — in particular the Model L
   Dockerfiles.
 - Must expose an OpenAI-compatible `/v1/chat/completions` endpoint and vLLM's native Prometheus
   metrics endpoint.
+- Two vLLM launch flags are load-bearing for this project and per the current Qwen model cards:
+  `--enable-auto-tool-choice --tool-call-parser qwen3_coder` (without these, vLLM won't emit tool
+  calls in OpenAI format and `agent-builder`'s tool loop will silently never fire), and
+  `--reasoning-parser qwen3` (surfaces thinking tokens as separate reasoning content, which is
+  what makes the reasoning-level knob observable). Confirm the exact flag names against the vLLM
+  version you install rather than assuming they're unchanged.
+- For the two MoE models, expert parallelism is enabled through vLLM's MoE/EP flags (an
+  expert-parallel toggle alongside data-parallel size) — confirm the exact flag names for your
+  vLLM version rather than assuming.
 - Ray-backed multi-node deployment for tensor/pipeline/data parallel across nodes.
 - Precision knob spans FP8 down to INT4 — confirm whether pre-quantized (AWQ/GPTQ/FP8) checkpoints
   already exist on Hugging Face for each of the three lineup models before assuming you need to

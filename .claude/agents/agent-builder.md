@@ -24,5 +24,10 @@ Also emit a per-session log with a client-side timestamp at request submission a
 delivery — this is how Turnaround Time (TAT) gets measured, and it has to happen here since it
 spans the full round trip including your own reasoning/tool steps, not just raw generation.
 
+Dependency worth knowing up front: the agent will only ever *receive* tool calls if
+`serving-builder` launched vLLM with tool-call parsing enabled (`--enable-auto-tool-choice
+--tool-call-parser qwen3_coder`). If your tool loop never triggers, check that on the serving
+side before spending time debugging the agent itself.
+
 When you believe Phase 3 (see `GOALS.md`) is met, say so and recommend invoking the `checker`
 subagent — do not declare the phase done yourself.

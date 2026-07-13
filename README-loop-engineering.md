@@ -2,20 +2,38 @@
 
 ## 1. One-time setup
 - Drop `CLAUDE.md`, `SPEC.md`, `GOALS.md`, `.claude/agents/*.md`, `.claude/hooks/*.sh`, and
-  `.claude/settings.json` into your project repo root.
+  `.claude/settings.json` into your project repo root, and add the included `.gitignore` (it keeps
+  `.claude/state/`, tfstate, and secrets out of git — the confirm flag living in `.claude/state/`
+  must never be committed).
 - `chmod +x .claude/hooks/*.sh`
-- Start Claude Code in the repo, then run `/hooks` — it should list `cost-guard`,
-  `cost-guard-track`, and `cost-banner`. If the payload field names in the hook scripts don't
-  match what your Claude Code version actually sends, fix those first (see the comments in each
-  script) — a hook that silently no-ops is worse than no hook, because it looks like protection
-  that isn't there.
+- Start Claude Code in the repo, then run `/hooks`. You should see the guard on **PreToolUse**,
+  the tracker on **both PostToolUse and PostToolUseFailure**, and the banner on **SessionStart**.
+  The PostToolUseFailure wiring is the important one: `PostToolUse` fires only on *success*, so
+  failure tracking (which arms the cost circuit breaker) has to hang off `PostToolUseFailure` —
+  an earlier draft that used only `PostToolUse` never armed the breaker at all.
+- The hook payload field names (`.tool_input.command`, `.hook_event_name`) were verified against
+  `code.claude.com/docs`, and the scripts fall back to matching the raw JSON payload with `grep`
+  when `jq` isn't installed, so they don't silently no-op on a machine without `jq`. Installing
+  `jq` is still nice for cleaner command strings in the block messages.
+- Recommended: run `make hooks-selftest` to confirm the guard actually behaves in your
+  environment — it drives the hooks through simulated payloads and checks that benign commands
+  pass, unconfirmed cost commands are blocked, the confirm flag is consumed once, and the circuit
+  breaker arms after 2 failures and resets on success. It uses a throwaway state dir, so it never
+  touches your real `.claude/state/`. Re-run it after editing any hook. (`make hooks-enable` sets
+  the exec bit the hooks need; a missing bit shows up as a WARN in the self-test.)
 
 ## 2. Suggested sequence
 1. Run Phase 1 from `GOALS.md` in the main session (no worktree — infra is one shared thing, not
    independent per-module work).
-2. Review the Terraform plan and cost estimate yourself. When you're satisfied, `touch
-   .claude/state/cost-action-confirmed` and run `terraform apply` yourself, outside the agent
-   loop. This step is intentionally not automated — see Guardrails in `CLAUDE.md`.
+2. Review the Terraform plan and cost estimate yourself. Then apply — two options:
+   - **Safest (default): apply it yourself** in your own terminal (`terraform apply`). The
+     cost-guard hook only governs commands *Claude* runs, so your own shell isn't gated and no
+     confirm flag is needed. This keeps the spend decision entirely in your hands.
+   - **If you'd rather have Claude run it:** `touch .claude/state/cost-action-confirmed`, then ask
+     Claude to apply. The hook allows exactly that one apply and consumes the flag. Use this only
+     when you actively want Claude in the apply loop.
+   Either way, this step is intentionally not part of any autonomous loop — see Guardrails in
+   `CLAUDE.md`.
 3. Once infra is up, launch `serving-builder`, `agent-builder`, `loadgen-builder`, and
    `monitoring-builder` as parallel subagents (each already configured with `isolation: worktree`
    in its frontmatter), since they touch independent directories and won't collide. Feed each its

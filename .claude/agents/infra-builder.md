@@ -9,9 +9,12 @@ isolation: worktree
 
 You build Terraform under `infra/` for a multi-node, multi-GPU AWS cluster supporting data,
 tensor, pipeline, and expert parallelism. Read `SPEC.md` first, especially the Model Lineup
-section — the largest model in the lineup (Qwen3.5-397B-A17B) is what actually determines the
-minimum viable cluster size; the other two models (Qwen3.6-27B, Qwen3.5-35B-A3B) will run
-comfortably on a subset of the same cluster.
+section — the largest model (Qwen3.5-397B-A17B) drives the sizing, but note the correction in
+SPEC.md: at FP8/INT4 its weights may actually fit on a single large node, so multi-node is a
+deliberate requirement here (to exercise cross-node pipeline/data parallel, to give KV-cache
+headroom at long context and high concurrency, and to serve BF16), not something the weight
+size alone forces. Do NOT quietly collapse the design to a single node just because the INT4
+weights fit — multi-node is in scope on purpose.
 
 Hard rule: you may run `terraform init`, `terraform validate`, and `terraform plan`. You must
 NEVER run `terraform apply` or `terraform destroy` — those require explicit human action outside

@@ -1,33 +1,56 @@
 #!/usr/bin/env bash
-# PostToolUse hook — tracks consecutive failures of cost-incurring commands for the
-# cost-guard circuit breaker in cost-guard.sh (PreToolUse). Resets the counter on
-# success, increments it on failure.
+# PostToolUse + PostToolUseFailure hook (matcher: Bash) — maintains the consecutive-failure
+# counter that cost-guard.sh (PreToolUse) reads for its circuit breaker.
 #
-# IMPORTANT: field names for the command and exit code are inferred from common
-# hook payload conventions — confirm against code.claude.com/docs before relying
-# on this in a real session.
+# CORRECTNESS NOTE (verified against https://code.claude.com/docs/en/hooks, 2026-07):
+#   - PostToolUse fires ONLY after a tool call SUCCEEDS.
+#   - PostToolUseFailure fires after a tool call FAILS.
+# Failure is detected by WHICH event fired, not by an exit code. (An earlier version read a
+# non-existent .tool_result.exit_code on a single PostToolUse hook, which never sees failures,
+# so the breaker never armed.) Wired to BOTH events; branches on the event name.
+#
+# jq-optional, same rationale as cost-guard.sh.
 
 set -euo pipefail
 
-STATE_DIR=".claude/state"
+STATE_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/state"
 FAIL_COUNT_FILE="$STATE_DIR/cost-guard-failcount"
+MAX_CONSECUTIVE_FAILURES=2
 mkdir -p "$STATE_DIR"
 
 payload="$(cat)"
-command="$(echo "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")"
-exit_code="$(echo "$payload" | jq -r '.tool_result.exit_code // 0' 2>/dev/null || echo "0")"
+COST_PATTERNS='terraform[[:space:]]+apply|terraform[[:space:]]+destroy|aws[[:space:]]+ec2[[:space:]]+run-instances|aws[[:space:]]+ec2[[:space:]]+create-fleet|aws[[:space:]]+ec2[[:space:]]+terminate-instances|eksctl[[:space:]]+create[[:space:]]+cluster'
 
-COST_PATTERNS='terraform apply|terraform destroy|aws ec2 run-instances|aws ec2 create-fleet|aws ec2 terminate-instances|eksctl create cluster'
+if command -v jq >/dev/null 2>&1; then
+  cmd="$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null || true)"
+  event="$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null || true)"
+else
+  cmd=""
+  event=""
+fi
+haystack="${cmd:-$payload}"
 
-if echo "$command" | grep -qE "$COST_PATTERNS"; then
-  if [ "$exit_code" != "0" ]; then
-    fail_count=0
-    [ -f "$FAIL_COUNT_FILE" ] && fail_count="$(cat "$FAIL_COUNT_FILE")"
-    echo $((fail_count + 1)) > "$FAIL_COUNT_FILE"
-    echo "cost-guard-track: recorded a failure ($((fail_count + 1))/2) for a cost-incurring command." >&2
-  else
-    rm -f "$FAIL_COUNT_FILE"
+# Resolve the event from the raw payload if jq wasn't available.
+if [ -z "$event" ]; then
+  if printf '%s' "$payload" | grep -q '"hook_event_name"[[:space:]]*:[[:space:]]*"PostToolUseFailure"'; then
+    event="PostToolUseFailure"
+  elif printf '%s' "$payload" | grep -q '"hook_event_name"[[:space:]]*:[[:space:]]*"PostToolUse"'; then
+    event="PostToolUse"
   fi
+fi
+
+if printf '%s' "$haystack" | grep -qE "$COST_PATTERNS"; then
+  case "$event" in
+    PostToolUseFailure)
+      fail_count=0
+      [ -f "$FAIL_COUNT_FILE" ] && fail_count="$(cat "$FAIL_COUNT_FILE")"
+      echo $((fail_count + 1)) > "$FAIL_COUNT_FILE"
+      echo "cost-guard: recorded failure $((fail_count + 1))/$MAX_CONSECUTIVE_FAILURES for a cost-incurring command; breaker trips at $MAX_CONSECUTIVE_FAILURES." >&2
+      ;;
+    PostToolUse)
+      rm -f "$FAIL_COUNT_FILE"   # success resets the consecutive-failure counter
+      ;;
+  esac
 fi
 
 exit 0

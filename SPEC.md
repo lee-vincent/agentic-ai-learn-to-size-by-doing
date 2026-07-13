@@ -44,7 +44,7 @@ dense-vs-MoE architecture, and single-node-vs-true-multi-node infra:
 |---|---|---|---|
 | **Qwen3.6-27B** | Dense | 27B / 27B | Dense baseline, released April 2026 — the newest and strongest dense model in the family. No expert-routing variable in the mix, so it isolates the effect of precision, KV-cache strategy, and parallelism knobs from MoE routing behavior. Single-node, multi-GPU territory. |
 | **Qwen3.5-35B-A3B** | MoE | 35B / 3B | Small-scale MoE — 256 experts + 1 shared expert, only ~8.6% of total params active per token. This is the cheap end of the expert-parallel knob: real MoE routing behavior, but modest enough to iterate on quickly and to compare directly against the 27B dense model at similar total-parameter scale. |
-| **Qwen3.5-397B-A17B** | MoE | 397B / 17B | Flagship MoE, released Feb 2026. This is the model that actually forces the multi-node, full-parallelism build already scoped for this project — at 397B total parameters, even INT4 weights won't comfortably fit in a single 8-GPU node's VRAM budget, so tensor parallel within a node plus pipeline parallel across nodes both matter for real, not just as configuration options that happen to be set. |
+| **Qwen3.5-397B-A17B** | MoE | 397B / 17B | Flagship MoE, released Feb 2026. This is where the sizing question gets genuinely interesting, and whether it *needs* multiple nodes depends on node type and precision — don't assume it forces multi-node. Back-of-envelope: BF16 (~2 bytes/param ≈ 800 GB of weights) won't fit a single 8×80 GB node and does force multi-node; FP8 (~400 GB) and INT4 (~200 GB) both fit the weights on one 8×80 GB node, but KV-cache headroom shrinks as context length and concurrency climb. Finding exactly where single-node stops being enough — for your chosen node, precision, and context/concurrency targets — is the whole point of the lab. (Treat those GB figures as estimates to verify against the model card and vLLM's own memory reporting.) Separately, you want a multi-node cluster *regardless* of this model's footprint, because exercising pipeline and data parallel across nodes is an explicit learning goal. |
 
 Two things to verify at build time rather than assume, since published third-party estimates
 vary in reliability:
@@ -61,7 +61,13 @@ vary in reliability:
 - **Serving**: vLLM only, Ray-backed for multi-node tensor/pipeline/data parallel. One
   OpenAI-compatible `/v1/chat/completions` endpoint per model in the lineup, all launched from
   the same container image with the model ID and parallelism config passed in as parameters —
-  not three separate container images to maintain.
+  not three separate container images to maintain. Two flags matter for this lab specifically
+  and are easy to forget: tool calling in OpenAI format needs vLLM launched with
+  `--enable-auto-tool-choice --tool-call-parser qwen3_coder`, and the reasoning-level knob only
+  becomes observable with `--reasoning-parser qwen3` (both per the current Qwen model cards;
+  verify against your installed vLLM version). Note these are vision-language models, so the
+  checkpoint includes a vision tower — a modest addition to the weight footprint even when
+  you're only serving text/agentic traffic.
 - **Agent**: a real tool-calling agent (at minimum a calculator tool and a retrieval/lookup tool)
   targeting the vLLM endpoint, used both as a study subject and as an agentic-shaped load source.
 - **Load generation**: NVIDIA `genai-perf` for raw-endpoint knob-sweep benchmarking, plus a

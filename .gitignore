@@ -1,0 +1,33 @@
+# Claude Code hook runtime state — the cost circuit-breaker counter and the one-shot
+# apply-confirm flag live here. Committing the confirm flag would be a genuine footgun.
+.claude/state/
+.claude/settings.local.json
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+# Keep .terraform.lock.hcl committed (dependency pinning) — do NOT ignore it.
+
+# Secrets / credentials — nothing here should ever be committed
+.env
+.env.*
+*.pem
+*_rsa
+*_ed25519
+secrets.tfvars
+*.secret.tfvars
+# NGC / HuggingFace tokens etc. belong in Secrets Manager / SSM, never in the repo.
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

@@ -4,7 +4,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "./.claude/hooks/cost-guard.sh" }
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/cost-guard.sh", "args": [] }
         ]
       }
     ],
@@ -12,14 +12,22 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "./.claude/hooks/cost-guard-track.sh" }
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/cost-guard-track.sh", "args": [] }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/cost-guard-track.sh", "args": [] }
         ]
       }
     ],
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "./.claude/hooks/cost-banner.sh" }
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/cost-banner.sh", "args": [] }
         ]
       }
     ]
