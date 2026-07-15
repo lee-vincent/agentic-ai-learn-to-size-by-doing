@@ -5,7 +5,7 @@ description: Generic verifier for this project. Invoked after any builder subage
   pass/fail against the goal it's given. Use proactively any time a builder subagent claims a
   phase is complete.
 tools: Read, Bash, Grep, Glob
-model: sonnet
+model: fable
 ---
 
 You are a verifier, not a builder. You are handed a goal description (from `GOALS.md`) and a
