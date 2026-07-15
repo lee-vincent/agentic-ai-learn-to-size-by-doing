@@ -153,15 +153,45 @@ resource "aws_vpc_security_group_ingress_rule" "internal_ports" {
   ip_protocol       = "tcp"
 }
 
-# FSx for Lustre needs 988/tcp (Lustre protocol) and the 1021-1023/tcp
-# ephemeral range from clients, per AWS's documented FSx Lustre SG
-# requirements.
+# FSx for Lustre (non-EFA-enabled file systems, which is what this module
+# creates -- see storage module's per_unit_storage_throughput default of
+# 125 MB/s/TiB, well under the >10 GBps tier where AWS recommends EFA-backed
+# file systems, which carry their own, stricter all-traffic-self+client SG
+# requirement) needs 988/tcp (Lustre protocol) and the 1018-1023/tcp
+# ephemeral range inbound from both (a) the file system security group
+# itself (self-referencing) and (b) the Lustre client security group.
+# Confirmed against AWS's "File system access control with Amazon VPC" FSx
+# for Lustre docs (2026-07-15). CreateFileSystem validates these rules
+# server-side, so a missing self-reference (as this SG had before) is
+# invisible to `terraform plan` but rejected at apply time with
+# InvalidNetworkSettings. AWS's docs list the same 988 + 1018-1023 rules as
+# outbound requirements too, but only "if your security group doesn't allow
+# all outbound traffic" -- this SG already does via fsx_egress_all below,
+# so no separate scoped egress rules are needed.
 resource "aws_security_group" "fsx" {
   name        = "${var.project}-fsx"
   description = "FSx for Lustre client access from the GPU cluster"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.project}-fsx-sg" })
+}
+
+resource "aws_vpc_security_group_ingress_rule" "fsx_lustre_self" {
+  security_group_id            = aws_security_group.fsx.id
+  description                  = "Lustre protocol between FSx file servers (self-referencing, required by AWS)"
+  referenced_security_group_id = aws_security_group.fsx.id
+  from_port                    = 988
+  to_port                      = 988
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "fsx_lustre_ephemeral_self" {
+  security_group_id            = aws_security_group.fsx.id
+  description                  = "Lustre ephemeral range between FSx file servers (self-referencing, required by AWS)"
+  referenced_security_group_id = aws_security_group.fsx.id
+  from_port                    = 1018
+  to_port                      = 1023
+  ip_protocol                  = "tcp"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "fsx_lustre" {
@@ -177,7 +207,7 @@ resource "aws_vpc_security_group_ingress_rule" "fsx_lustre_ephemeral" {
   security_group_id            = aws_security_group.fsx.id
   description                  = "Lustre ephemeral range from cluster nodes"
   referenced_security_group_id = aws_security_group.cluster.id
-  from_port                    = 1021
+  from_port                    = 1018
   to_port                      = 1023
   ip_protocol                  = "tcp"
 }
