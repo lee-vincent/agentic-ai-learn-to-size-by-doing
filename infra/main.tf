@@ -71,7 +71,11 @@ data "aws_servicequotas_service_quota" "p_instances" {
 }
 
 # Also surfaced for visibility in case gpu_instance_type is switched to a
-# G-family type (e.g. g6e.48xlarge) instead of the default P-family choice.
+# G-family type instead of the default P-family choice -- e.g. the
+# quota-constrained bring-up profile in infra/examples/g6e-multinode.tfvars
+# (2x g6e.4xlarge, 16 vCPU/node = 32 vCPU total, fits comfortably inside the
+# 48-vCPU G&VT quota that most accounts already have, unlike the P-family
+# quota which AWS ships at a much lower default and reviews manually).
 data "aws_servicequotas_service_quota" "g_instances" {
   service_code = "ec2"
   quota_code   = "L-DB2E81BA" # "Running On-Demand G and VT instances" (vCPU-denominated)

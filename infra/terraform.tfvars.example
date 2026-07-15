@@ -15,6 +15,21 @@ project    = "gpu-sizing-lab"
 gpu_instance_type = "p5.48xlarge"
 gpu_node_count    = 2
 
+# --- Alternate G-family profile (quota-constrained bring-up) ---
+# If the P-family vCPU quota increase above is still pending (this account
+# has one CASE_OPENED as of 2026-07-15 -- check with
+# `./scripts/check_gpu_quota.sh`), use the ready-made alternate profile
+# instead of editing this file:
+#
+#   terraform plan -var-file=examples/g6e-multinode.tfvars
+#
+# That sets gpu_instance_type = "g6e.4xlarge" and gpu_node_count = 2 (2x
+# 1-GPU L40S nodes, 32 vCPU total, fits the existing 48-vCPU G&VT quota with
+# no increase needed). See infra/README.md's "Alternate G-family profile"
+# section for what it costs, what it can't do (no EFA, no flagship
+# 397B-A17B model), and what it's actually useful for (real multi-node
+# Ray/vLLM/monitoring bring-up on the two smaller lineup models today).
+
 # Leave empty to rely on SSM Session Manager (default). Only set this if you
 # specifically need direct SSH into the nodes.
 ssh_ingress_cidrs = []

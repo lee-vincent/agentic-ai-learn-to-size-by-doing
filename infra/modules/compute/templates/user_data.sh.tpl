@@ -12,10 +12,22 @@ echo "node_index=${node_index}"
 echo "gpu_instance_type=${gpu_instance_type}"
 
 echo "--- EFA check ---"
-if command -v fi_info >/dev/null 2>&1; then
-  fi_info -p efa || echo "WARNING: fi_info ran but reported no efa provider"
+# gpu_instance_type's EFA support is resolved once, in Terraform, via the
+# aws_ec2_instance_type data source (modules/compute/main.tf) -- not
+# re-detected here. On an EFA-capable type (e.g. p5.48xlarge) this node was
+# given an EFA-typed ENI and this block verifies the driver/libfabric side;
+# on a non-EFA type (e.g. g6e.4xlarge) this is an expected, clean no-op --
+# cross-node NCCL/Ray traffic falls back to standard ENA/TCP over the
+# regular ENI, which is fine for multi-node mechanics/bring-up but not for
+# interconnect performance numbers (see infra/README.md).
+if [ "${efa_expected}" = "true" ]; then
+  if command -v fi_info >/dev/null 2>&1; then
+    fi_info -p efa || echo "WARNING: fi_info ran but reported no efa provider (expected on this instance type per Terraform) -- check the AMI release notes."
+  else
+    echo "WARNING: fi_info not found -- EFA installer may not be present on this AMI; verify against the AMI release notes before relying on it for NCCL/Ray collective traffic."
+  fi
 else
-  echo "WARNING: fi_info not found -- EFA installer may not be present on this AMI; verify against the AMI release notes before relying on it for NCCL/Ray collective traffic."
+  echo "gpu_instance_type=${gpu_instance_type} does not support EFA (verified via aws_ec2_instance_type at plan time) -- skipping EFA check by design. Cross-node collectives will use standard ENA/TCP."
 fi
 
 echo "--- NVIDIA driver check ---"

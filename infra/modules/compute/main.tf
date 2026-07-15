@@ -5,6 +5,17 @@ data "aws_ec2_instance_type" "gpu" {
   instance_type = var.gpu_instance_type
 }
 
+locals {
+  # Detect EFA support from the API rather than a hardcoded per-type list --
+  # e.g. p5.48xlarge is EFA-capable (EfaSupported=true, verified 2026-07-15
+  # via `aws ec2 describe-instance-types`), g6e.4xlarge is not
+  # (EfaSupported=false, same verification). Driving this off the data
+  # source means switching gpu_instance_type to any other family (G, P, or
+  # future types) never silently tries to attach an EFA ENI to hardware that
+  # doesn't support it.
+  efa_supported = data.aws_ec2_instance_type.gpu.efa_supported
+}
+
 # AWS Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04). Its
 # description (verified 2026-07-13) explicitly lists support for
 # G4dn/G5/G6/G6e/G7/G7e/P4d/P4de/P5/P5e/P5en/P6-B200/P6-B300 and ships with
@@ -26,18 +37,34 @@ resource "aws_placement_group" "gpu_cluster" {
   tags = merge(var.tags, { Name = "${var.project}-gpu-cluster-pg" })
 }
 
-# One EFA-enabled ENI per node. aws_instance's inline network_interface
-# block only supports interface_type = "secondary", so the EFA interface
-# has to be created as its own aws_network_interface resource (interface_
-# type = "efa") and then attached as the instance's primary interface here.
+# One ENI per node, attached as the instance's primary interface.
+# aws_instance's inline network_interface block only supports
+# interface_type = "secondary", so this has to be created as its own
+# aws_network_interface resource and then attached below.
+#
+# interface_type is only set to "efa" when the selected gpu_instance_type
+# actually supports it (local.efa_supported, above); otherwise it's left
+# null so the provider defaults to a standard ENA interface ("interface").
+# This lets gpu_instance_type be switched to a non-EFA type (e.g.
+# g6e.4xlarge, used for quota-constrained bring-up per
+# infra/examples/g6e-multinode.tfvars) without the apply failing -- EFA
+# interfaces can only be attached to instance types that support EFA.
+#
+# The cluster security group's self-referencing all-traffic rule
+# (modules/networking, aws_vpc_security_group_ingress_rule.cluster_self_all,
+# ip_protocol = "-1") is not EFA-specific -- it works identically for
+# standard ENA cross-node traffic, so Ray/NCCL-over-TCP still functions on
+# the non-EFA path (at ENA throughput/latency, not EFA's).
 resource "aws_network_interface" "gpu" {
   count = var.gpu_node_count
 
   subnet_id       = var.subnet_id
   security_groups = [var.cluster_security_group_id]
-  interface_type  = "efa"
+  interface_type  = local.efa_supported ? "efa" : null
 
-  tags = merge(var.tags, { Name = "${var.project}-gpu-${count.index}-efa0" })
+  tags = merge(var.tags, {
+    Name = "${var.project}-gpu-${count.index}-${local.efa_supported ? "efa0" : "eni0"}"
+  })
 }
 
 # Direct public IP per node (see modules/networking for the NAT-vs-EIP cost
@@ -81,6 +108,7 @@ resource "aws_instance" "gpu" {
   user_data = templatefile("${path.module}/templates/user_data.sh.tpl", {
     node_index        = count.index
     gpu_instance_type = var.gpu_instance_type
+    efa_expected      = local.efa_supported
     fsx_dns_name      = var.fsx_dns_name
     fsx_mount_name    = var.fsx_mount_name
   })

@@ -11,7 +11,8 @@ a subset of the same homogeneous cluster. **This module only ever runs
 infra/
 ├── main.tf, variables.tf, outputs.tf, versions.tf   # root module: wires everything together
 ├── terraform.tfvars.example                          # documented knobs, copy to terraform.tfvars
-├── scripts/check_gpu_quota.sh                        # vCPU quota check/request helper
+├── examples/g6e-multinode.tfvars                     # alt G-family profile (quota-constrained bring-up)
+├── scripts/check_gpu_quota.sh                        # vCPU quota check/request helper (family-agnostic)
 └── modules/
     ├── networking/   # VPC, subnet (auto-picks an AZ that offers the GPU instance type),
     │                 # IGW, security groups (EFA self-referencing rule, FSx Lustre ports,
@@ -19,7 +20,9 @@ infra/
     ├── storage/      # S3 staging bucket + FSx for Lustre (PERSISTENT_2) with a Data
     │                 # Repository Association for lazy S3->FSx hydration
     ├── iam/          # GPU-node IAM role/instance profile + the HF_TOKEN SSM parameter slot
-    └── compute/      # Cluster placement group, EFA ENIs + EIPs, GPU instances (DLAMI)
+    └── compute/      # Cluster placement group, ENIs (EFA if the instance
+                      # type supports it, else standard ENA) + EIPs, GPU
+                      # instances (DLAMI)
 ```
 
 ## Instance choice: `p5.48xlarge` (8x H100 80GB)
@@ -61,6 +64,12 @@ Why `p5.48xlarge` over the alternatives actually checked:
 
 `gpu_instance_type` is a variable -- switching between any of the above is
 a one-line change (plus re-verifying quota/pricing, since both drift).
+`modules/compute` detects EFA support and derives per-node vCPUs live from
+the `aws_ec2_instance_type` data source rather than a hardcoded list, so
+non-EFA types work correctly too -- see "Alternate G-family profile
+(quota-constrained bring-up)" below for a concrete non-EFA example
+(`g6e.4xlarge`) that's actually usable *today* while the P-family quota
+increase above is still pending.
 
 ## VRAM footprint of Qwen3.5-397B-A17B -- verified, not estimated
 
@@ -239,7 +248,7 @@ requirements.
 ## GPU instance vCPU quota -- checked, and it is *not* zero but *is* insufficient
 
 Checked live against this AWS account (`161898774946`, `us-east-1`,
-2026-07-13) via `aws service-quotas get-service-quota`:
+re-verified **2026-07-15**) via `aws service-quotas get-service-quota`:
 
 | Quota | Current value | Needed for default plan (2x `p5.48xlarge`) |
 |---|---|---|
@@ -253,19 +262,36 @@ still nowhere near enough for even a single `p5.48xlarge` (192 vCPUs) or
 (it's not a plan-time check the AWS API exposes), but `RunInstances` will
 reject the launch at apply time with an insufficient-quota error.
 
-Three ways to check/act on this, in increasing order of automation:
+**A P-family increase request to 384 vCPUs is already filed and pending**
+(`aws service-quotas list-requested-service-quota-change-history-by-quota
+--service-code ec2 --quota-code L-417A185B`, re-checked 2026-07-15: request
+ID `d7c43e4f0e9d431aa346da4fb10ac509Q7BNDQVH`, opened 2026-07-13, status
+`CASE_OPENED` -- not yet `APPROVED`). P-family increases are frequently
+reviewed manually by AWS, so there's no fixed ETA. Rather than block all
+multi-node work on that approval, `gpu_instance_type`/`gpu_node_count` can
+be pointed at a G-family profile that already fits inside the existing
+48-vCPU G&VT quota -- see "Alternate G-family profile" below.
+
+Three ways to check/act on quota, in increasing order of automation (all
+generalized across instance families -- see "Alternate G-family profile"
+below for how):
 
 1. **Terraform output** (read-only, computed every `plan`/`apply`, from
-   `data.aws_servicequotas_service_quota` in `main.tf`):
+   `data.aws_servicequotas_service_quota` in `main.tf`; automatically
+   switches between the P and G&VT pools based on `gpu_instance_type`):
    ```
    terraform output quota_check
    ```
 2. **`infra/scripts/check_gpu_quota.sh`** -- read-only by default, only
-   submits a request when you explicitly pass `--request <value>`:
+   submits a request when you explicitly pass `--request <value>`. Derives
+   per-node vCPUs and the applicable quota code live from
+   `--instance-type` (via `aws ec2 describe-instance-types`) rather than a
+   hardcoded table:
    ```
-   ./scripts/check_gpu_quota.sh                    # just check
-   ./scripts/check_gpu_quota.sh --request 384       # request exactly enough for 2 nodes
-   ./scripts/check_gpu_quota.sh --request 768       # request enough for 4 nodes (DP=2 x PP=2 headroom)
+   ./scripts/check_gpu_quota.sh                                              # default plan: 2x p5.48xlarge, checks P quota
+   ./scripts/check_gpu_quota.sh --instance-type g6e.4xlarge --node-count 2   # G-family profile, checks G&VT quota
+   ./scripts/check_gpu_quota.sh --request 384                               # request exactly enough for 2x p5.48xlarge
+   ./scripts/check_gpu_quota.sh --request 768                               # request enough for 4 nodes (DP=2 x PP=2 headroom)
    ```
 3. **Raw AWS CLI**, if you'd rather not use the script:
    ```
@@ -286,6 +312,88 @@ side effect of `terraform apply`). Requesting a quota increase is treated
 here as its own explicit, human-initiated action, consistent with this
 project's guardrail that cost/capacity-adjacent actions require explicit
 confirmation.
+
+## Alternate G-family profile (quota-constrained bring-up)
+
+**Why**: the P-family quota increase needed for the default plan (above) is
+filed but still pending (`CASE_OPENED`, no fixed ETA -- AWS reviews large
+P-family requests manually). Multi-node bring-up work -- validating the
+placement group, Ray head/worker wiring, FSx mount, monitoring stack, and
+general Terraform mechanics -- doesn't need to wait on that approval. This
+profile swaps in a G-family instance type that already fits inside the
+account's *existing* G&VT quota, so `terraform apply` (a human's decision,
+not this build's) can proceed on real multi-node hardware today.
+
+**Chosen config: 2x `g6e.4xlarge`.** Live-verified **2026-07-15**
+(`us-east-1`) via `aws ec2 describe-instance-types` and the AWS Price List
+API -- not recalled from memory:
+
+| Fact | Value |
+|---|---|
+| GPU | 1x NVIDIA L40S, 45,776 MiB = **44.7 GiB** VRAM |
+| EFA support | **`EfaSupported: false`** |
+| vCPUs/node | 16 |
+| Placement group support | `cluster`, `partition`, `spread` (cluster PG still usable) |
+| On-demand price | **$3.00424/hr** (Linux, `us-east-1`, shared tenancy) |
+| 2-node total | 89.4 GiB VRAM, 32 vCPUs, **$6.01/hr** compute |
+
+**EFA caveat**: `g6e.4xlarge` does not support EFA (confirmed above, and by
+`modules/compute`'s `aws_ec2_instance_type.gpu.efa_supported` at plan time
+-- see `terraform output gpu_cluster_efa_supported`). `modules/compute` now
+detects this automatically and attaches a standard ENA network interface
+instead of an EFA one (a hardcoded EFA attachment would otherwise make
+`apply` fail outright on this instance type). Practically: cross-node
+NCCL/Ray/gloo collective traffic falls back to plain TCP over the regular
+ENI. That's **fine for exercising multi-node mechanics** -- placement
+group, Ray head/worker rendezvous, pipeline-parallel/data-parallel wiring,
+FSx mount, monitoring bring-up -- but it is **not representative of EFA's
+actual interconnect latency/bandwidth**, so don't use this profile to
+generate the interconnect-performance numbers SPEC.md cares about (TTFT/ITL
+under cross-node tensor or pipeline parallel specifically). Switch back to
+the default `p5.48xlarge` (or another EFA-capable type) once the P-family
+quota lands for those measurements.
+
+**Which lineup models actually fit at 89.4 GiB total (2 nodes x 44.7 GiB,
+1 GPU/node)**: verified against real HuggingFace checkpoint bytes
+(2026-07-15, same method as the flagship model's verification above):
+
+| Model | BF16 weights | FP8 weights (official quant) | Fits 1x `g6e.4xlarge` GPU (44.7 GiB)? |
+|---|---|---|---|
+| `Qwen3.6-27B` (dense) | 51.7 GiB | **28.7 GiB** (`Qwen/Qwen3.6-27B-FP8`) | BF16 no; **FP8 yes** -- ~16 GiB left for KV cache |
+| `Qwen3.5-35B-A3B` (small MoE) | 67.0 GiB | **34.9 GiB** (`Qwen/Qwen3.5-35B-A3B-FP8`) | BF16 no; **FP8 yes** -- ~9.8 GiB left for KV cache (thinner; low concurrency/short context, or spread via pipeline-parallel across both nodes for more headroom) |
+| `Qwen3.5-397B-A17B` (flagship MoE) | 751.4 GiB | 378.3 GiB | **No, not even close** -- FP8 alone (378.3 GiB) is more than 4x this profile's entire 2-node VRAM budget (89.4 GiB). This profile is not a substitute for the P-family cluster for the flagship model at *any* precision tested here, including INT4 (219.5 GiB, still ~2.5x over budget). |
+
+So: this profile is genuinely useful for real multi-node mechanics and for
+exercising the two smaller lineup models (both at FP8; both models' BF16
+checkpoints exceed a single L40S's 44.7 GiB and would need pipeline
+parallelism spread thinly across both nodes to fit at all) -- it is
+explicitly **not** a way to test the flagship 397B-A17B model at any
+tested precision, and not representative of EFA-class interconnect
+performance. It exists to unblock bring-up work now, not to replace the
+default plan.
+
+**Corrected quota math for this profile**:
+
+| Quota | Current value | Needed (2x `g6e.4xlarge`) | Sufficient? |
+|---|---|---|---|
+| `L-DB2E81BA` "Running On-Demand G and VT instances" (vCPUs) | 48 | 2 x 16 = **32** | **Yes** -- 16 vCPUs of headroom left over |
+
+Confirmed end-to-end via `terraform plan -var-file=examples/g6e-multinode.tfvars`
+-- `terraform output quota_check` on that plan reports
+`instance_family = "Running On-Demand G and VT instances"`,
+`required_vcpus = 32`, `current_quota_vcpus = 48`, `sufficient = true`.
+
+**How to use it**:
+```
+cd infra
+terraform plan -var-file=examples/g6e-multinode.tfvars
+```
+See `infra/examples/g6e-multinode.tfvars` for the full commented tfvars
+file. Everything else (networking, storage, IAM, HF_TOKEN slot) is
+identical to the default plan -- only `gpu_instance_type` and
+`gpu_node_count` differ, and both are already set correctly in that file
+(`gpu_node_count` stays `>= 2`; multi-node remains a hard requirement here,
+not something this profile relaxes).
 
 ## Cost estimate (for human review)
 
@@ -332,9 +440,24 @@ terraform plan            # review the plan + the quota_check and
 # terraform apply
 ```
 
+Or, for the quota-constrained G-family bring-up profile (see "Alternate
+G-family profile" above) instead of the default P-family plan:
+
+```
+cd infra
+terraform init
+terraform validate
+terraform plan -var-file=examples/g6e-multinode.tfvars
+
+# NEVER run from an agent loop -- apply is an explicit human action:
+# terraform apply -var-file=examples/g6e-multinode.tfvars
+```
+
 Before `apply`:
 1. Confirm/request the vCPU quota increase (see above) -- `apply` will fail
-   without it.
+   without it. (Not applicable to the G-family profile, which already fits
+   the existing G&VT quota -- confirm with `terraform output quota_check`
+   on that plan.)
 2. Review `terraform plan`'s resource count and the cost table above.
 3. Decide whether you actually want the HF_TOKEN slot populated (see
    injection command above) -- it's fine to leave it as the placeholder

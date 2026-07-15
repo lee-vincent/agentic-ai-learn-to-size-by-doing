@@ -37,7 +37,7 @@ variable "cluster_subnet_cidr" {
 # envelope this lab is built around. Multi-node is provisioned regardless,
 # per SPEC.md/CLAUDE.md, to exercise cross-node pipeline/data parallel.
 variable "gpu_instance_type" {
-  description = "EC2 instance type for GPU cluster nodes. Must be in the P-family (see infra/README.md for the current EFA + pricing verification)."
+  description = "EC2 instance type for GPU cluster nodes. Default is the P-family p5.48xlarge (see infra/README.md for the current EFA + pricing verification). A G-family alternative (g6e.4xlarge) is also supported for quota-constrained bring-up while a P-family vCPU quota increase is pending -- see infra/examples/g6e-multinode.tfvars and the README's 'Alternate G-family profile' section. EFA attachment (modules/compute) and the vCPU quota check (main.tf) both key off this value automatically via the aws_ec2_instance_type data source, so other instance types are mechanically supported too, but only p5.48xlarge and g6e.4xlarge are verified/documented here."
   type        = string
   default     = "p5.48xlarge"
 }

@@ -18,6 +18,11 @@ output "vcpus_per_node" {
   value = data.aws_ec2_instance_type.gpu.default_vcpus
 }
 
+output "efa_supported" {
+  description = "Whether the configured gpu_instance_type supports EFA (drives the network_interface interface_type in this module -- see main.tf)."
+  value       = local.efa_supported
+}
+
 locals {
   # `gpus` is a set (no stable index), so convert to a list before indexing.
   # Every current GPU instance type has exactly one homogeneous GPU entry
