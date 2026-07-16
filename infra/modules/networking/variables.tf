@@ -6,12 +6,12 @@ variable "vpc_cidr" {
   type = string
 }
 
-variable "cluster_subnet_cidr" {
+variable "subnet_cidr" {
   type = string
 }
 
 variable "gpu_instance_type" {
-  description = "Used only to discover which AZ in this region actually offers this instance type, so the subnet/placement group land somewhere capacity can exist."
+  description = "Used only to discover which AZ in this region actually offers this instance type, so the subnet lands somewhere capacity can exist."
   type        = string
 }
 

@@ -3,17 +3,13 @@ output "vpc_id" {
 }
 
 output "subnet_id" {
-  value = aws_subnet.cluster.id
+  value = aws_subnet.main.id
 }
 
 output "availability_zone" {
   value = local.gpu_az
 }
 
-output "cluster_security_group_id" {
-  value = aws_security_group.cluster.id
-}
-
-output "fsx_security_group_id" {
-  value = aws_security_group.fsx.id
+output "security_group_id" {
+  value = aws_security_group.instance.id
 }

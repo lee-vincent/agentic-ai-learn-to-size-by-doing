@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "AWS region for the cluster. us-east-1 has the deepest P5/P4d capacity pools and is where pricing/quota below were verified."
+  description = "AWS region for the lab. us-east-1 is where pricing/quota/availability below were verified live (2026-07-16)."
   type        = string
   default     = "us-east-1"
 }
@@ -22,77 +22,54 @@ variable "vpc_cidr" {
   default     = "10.42.0.0/16"
 }
 
-variable "cluster_subnet_cidr" {
-  description = "CIDR for the single subnet the GPU cluster placement group lives in. Cluster placement groups and EFA both want everything in one AZ/subnet."
+variable "subnet_cidr" {
+  description = "CIDR for the single public subnet the GPU instance lives in."
   type        = string
   default     = "10.42.1.0/24"
 }
 
 # --- GPU compute sizing ---------------------------------------------------
 # See infra/README.md "Instance choice" for the full derivation. Short
-# version: Qwen3.5-397B-A17B's real checkpoint sizes (verified against the
-# HF repos, not a blog estimate) are ~751 GiB BF16 / ~378 GiB FP8 / ~220 GiB
-# INT4. An 8x80GiB H100 node (p5.48xlarge, 640 GiB VRAM) fits FP8 and INT4
-# on a single node but not BF16 -- which is exactly the SPEC.md back-of-
-# envelope this lab is built around. Multi-node is provisioned regardless,
-# per SPEC.md/CLAUDE.md, to exercise cross-node pipeline/data parallel.
+# version: this is a single-node, single-GPU lab on purpose (see SPEC.md's
+# "Scope history") -- one instance, no cluster placement group, no EFA, no
+# multi-node anything. g6e.2xlarge (1x L40S, 44.7 GiB VRAM, 8 vCPU, 64 GiB
+# RAM) is the default: verified live (2026-07-16, us-east-1) at $2.24208/hr
+# on-demand, and Qwen3.6-27B fits its VRAM at FP8 (~29 GiB weights, ~15 GiB
+# left for KV cache) -- see infra/README.md for the checkpoint-size
+# verification.
 variable "gpu_instance_type" {
-  description = "EC2 instance type for GPU cluster nodes. Default is the P-family p5.48xlarge (see infra/README.md for the current EFA + pricing verification). A G-family alternative (g6e.4xlarge) is also supported for quota-constrained bring-up while a P-family vCPU quota increase is pending -- see infra/examples/g6e-multinode.tfvars and the README's 'Alternate G-family profile' section. EFA attachment (modules/compute) and the vCPU quota check (main.tf) both key off this value automatically via the aws_ec2_instance_type data source, so other instance types are mechanically supported too, but only p5.48xlarge and g6e.4xlarge are verified/documented here."
+  description = "EC2 instance type for the single GPU instance. Default g6e.2xlarge (1x L40S, 8 vCPU/64 GiB RAM) -- see infra/README.md for verified pricing/availability. g6e.xlarge (4 vCPU/32 GiB) is cheaper but risky for loading a 27B checkpoint plus request/vision preprocessing headroom; g6e.4xlarge (16 vCPU/128 GiB) gives more headroom if needed. Only one instance is ever created -- there is no node-count variable in this design."
   type        = string
-  default     = "p5.48xlarge"
-}
-
-variable "gpu_node_count" {
-  description = "Number of homogeneous GPU nodes in the cluster placement group. Must be >= 2 -- multi-node is a deliberate requirement (see CLAUDE.md/SPEC.md), not something to collapse to 1 even though FP8/INT4 weights alone would fit on a single node."
-  type        = number
-  default     = 2
-
-  validation {
-    condition     = var.gpu_node_count >= 2
-    error_message = "gpu_node_count must be >= 2: multi-node is a deliberate requirement for this lab, to exercise cross-node pipeline/data parallel (see SPEC.md and CLAUDE.md)."
-  }
+  default     = "g6e.2xlarge"
 }
 
 variable "root_volume_size_gb" {
-  description = "Root EBS volume size (GiB) per GPU node. Model weights live on shared FSx, not the root volume, so this only needs to hold the OS, container images, and vLLM/Ray installs."
+  description = "Root EBS volume size (GiB), gp3, encrypted. Holds the OS, container image(s), vLLM install, and the Qwen3.6-27B FP8 checkpoint (~29 GiB) -- sized with comfortable headroom rather than a dedicated second data volume, since a single lab instance doesn't need the extra mount/format complexity of a separate EBS volume. See infra/README.md for the sizing rationale."
   type        = number
   default     = 300
 }
 
 variable "ssh_ingress_cidrs" {
-  description = "CIDR blocks allowed to SSH (22/tcp) into cluster nodes. Left empty by default -- use AWS Systems Manager Session Manager instead (the instance role already has AmazonSSMManagedInstanceCore). Only set this if you specifically need direct SSH."
+  description = "CIDR blocks allowed to SSH (22/tcp) into the instance. Empty by default -- use AWS Systems Manager Session Manager instead (the instance role already has AmazonSSMManagedInstanceCore). Only set this if you specifically need direct SSH."
   type        = list(string)
   default     = []
 }
 
 variable "internal_ingress_cidrs" {
-  description = "CIDR blocks allowed to reach vLLM/Ray/monitoring ports (see modules/networking for the port list). Defaults to the VPC CIDR only -- nothing is exposed to the public internet by default."
+  description = "CIDR blocks allowed to reach vLLM/monitoring ports (see modules/networking for the port list). Defaults to the VPC CIDR only -- nothing is exposed to the public internet by default."
   type        = list(string)
   default     = null # resolved to [var.vpc_cidr] in main.tf when left null
 }
 
 variable "ssh_key_name" {
-  description = "Optional existing EC2 key pair name to attach to GPU nodes for SSH fallback. Leave null to rely solely on SSM Session Manager."
+  description = "Optional existing EC2 key pair name to attach to the instance for SSH fallback. Leave null to rely solely on SSM Session Manager."
   type        = string
   default     = null
 }
 
-# --- Shared storage --------------------------------------------------------
-variable "fsx_storage_capacity_gib" {
-  description = "FSx for Lustre capacity in GiB. Must comfortably hold whichever precision variants of the model lineup you keep cached concurrently -- see infra/README.md for the sizing math (BF16+FP8+INT4 of the 397B-A17B model alone is ~1.35 TiB)."
-  type        = number
-  default     = 2400
-}
-
-variable "fsx_per_unit_storage_throughput" {
-  description = "FSx for Lustre PERSISTENT_2 SSD throughput tier (MB/s per TiB). Valid values: 125, 250, 500, 1000."
-  type        = number
-  default     = 125
-}
-
 # --- HF_TOKEN secret slot ---------------------------------------------------
 variable "hf_token_parameter_name" {
-  description = "SSM Parameter Store path for the (empty at plan/apply time) HuggingFace token slot. The value is injected out-of-band by a human -- see infra/README.md."
+  description = "SSM Parameter Store path for the (empty at plan/apply time) HuggingFace token slot. The value is injected out-of-band by a human -- see infra/README.md. The Qwen lineup is Apache-2.0/ungated, so this is provisioned but expected to stay unused."
   type        = string
   default     = "/gpu-sizing-lab/hf-token"
 }

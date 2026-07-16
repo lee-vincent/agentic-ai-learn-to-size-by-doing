@@ -2,7 +2,7 @@
 # Empty placeholder only. Terraform creates the parameter and its dedicated
 # KMS key, but never manages the *value* -- see the lifecycle block below.
 # The Qwen lineup in SPEC.md is entirely Apache-2.0/ungated, so this may
-# never actually be needed, but the slot exists so serving nodes can read a
+# never actually be needed, but the slot exists so the instance can read a
 # token later without an infra change.
 #
 # Chosen SSM SecureString over Secrets Manager: functionally equivalent for
@@ -46,7 +46,7 @@ resource "aws_ssm_parameter" "hf_token" {
   }
 }
 
-# --- GPU serving-node role ---------------------------------------------------
+# --- GPU instance role ---------------------------------------------------
 data "aws_iam_policy_document" "assume_role" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -57,24 +57,27 @@ data "aws_iam_policy_document" "assume_role" {
   }
 }
 
-resource "aws_iam_role" "gpu_node" {
-  name               = "${var.project}-gpu-node"
+resource "aws_iam_role" "gpu_instance" {
+  name               = "${var.project}-gpu-instance"
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
 
-  tags = merge(var.tags, { Name = "${var.project}-gpu-node-role" })
+  tags = merge(var.tags, { Name = "${var.project}-gpu-instance-role" })
 }
 
 # Session Manager access instead of open SSH (pairs with ssh_ingress_cidrs
 # defaulting to empty in the networking module).
 resource "aws_iam_role_policy_attachment" "ssm_core" {
-  role       = aws_iam_role.gpu_node.name
+  role       = aws_iam_role.gpu_instance.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# Read-only ECR pull access for the vLLM container image (containers/vllm/,
-# built in Phase 2). Read-only, no push/delete/repo-management permissions.
+# Read-only ECR pull access, in case the vLLM container image
+# (containers/vllm/, built in Phase 2) is ever hosted in ECR rather than
+# built locally on the instance. Read-only, no push/delete/repo-management
+# permissions -- harmless to keep provisioned even if Phase 2 ends up not
+# using ECR at all.
 resource "aws_iam_role_policy_attachment" "ecr_read" {
-  role       = aws_iam_role.gpu_node.name
+  role       = aws_iam_role.gpu_instance.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
@@ -101,39 +104,13 @@ resource "aws_iam_policy" "hf_token_read" {
 }
 
 resource "aws_iam_role_policy_attachment" "hf_token_read" {
-  role       = aws_iam_role.gpu_node.name
+  role       = aws_iam_role.gpu_instance.name
   policy_arn = aws_iam_policy.hf_token_read.arn
 }
 
-# Scoped read access to the model-weights staging bucket (this bucket only
-# -- see modules/storage).
-data "aws_iam_policy_document" "weights_bucket_read" {
-  statement {
-    sid       = "ListWeightsBucket"
-    actions   = ["s3:ListBucket"]
-    resources = [var.weights_bucket_arn]
-  }
+resource "aws_iam_instance_profile" "gpu_instance" {
+  name = "${var.project}-gpu-instance"
+  role = aws_iam_role.gpu_instance.name
 
-  statement {
-    sid       = "ReadWeightsObjects"
-    actions   = ["s3:GetObject"]
-    resources = ["${var.weights_bucket_arn}/*"]
-  }
-}
-
-resource "aws_iam_policy" "weights_bucket_read" {
-  name   = "${var.project}-weights-bucket-read"
-  policy = data.aws_iam_policy_document.weights_bucket_read.json
-}
-
-resource "aws_iam_role_policy_attachment" "weights_bucket_read" {
-  role       = aws_iam_role.gpu_node.name
-  policy_arn = aws_iam_policy.weights_bucket_read.arn
-}
-
-resource "aws_iam_instance_profile" "gpu_node" {
-  name = "${var.project}-gpu-node"
-  role = aws_iam_role.gpu_node.name
-
-  tags = merge(var.tags, { Name = "${var.project}-gpu-node-profile" })
+  tags = merge(var.tags, { Name = "${var.project}-gpu-instance-profile" })
 }

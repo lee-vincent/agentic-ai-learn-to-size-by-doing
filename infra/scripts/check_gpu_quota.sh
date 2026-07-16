@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 # Check (and optionally request an increase to) the EC2 vCPU quota that
-# actually applies to whichever GPU instance family this cluster is
-# configured with -- most AWS accounts start at (or near) 0 for the G/P
-# instance families, and this cluster needs `gpu_node_count *
-# vcpus_per(gpu_instance_type)` vCPUs of quota before `terraform apply` can
-# actually launch anything (terraform plan does not check this -- the
+# actually applies to whichever GPU instance family this single-instance lab
+# is configured with -- most AWS accounts start at (or near) 0 for the G/P
+# instance families, and this lab needs at least
+# `vcpus_per(gpu_instance_type)` vCPUs of quota before `terraform apply` can
+# actually launch the instance (terraform plan does not check this -- the
 # EC2 RunInstances call at apply time is where an insufficient quota
 # surfaces, as a launch failure).
 #
-# Generalized across instance families rather than hardwired to P: both the
-# quota code AND the per-node vCPU count are derived live, not hardcoded --
-#   - per-node vCPUs: `aws ec2 describe-instance-types` (VCpuInfo.
-#     DefaultVCpus) for whatever --instance-type you pass -- the same data
-#     Terraform's aws_ec2_instance_type data source reads
-#     (modules/compute/main.tf), so this script and `terraform output
-#     quota_check` never disagree on the required total.
+# Generalized across instance families rather than hardwired to G: both the
+# quota code AND the vCPU count are derived live, not hardcoded --
+#   - vCPUs: `aws ec2 describe-instance-types` (VCpuInfo.DefaultVCpus) for
+#     whatever --instance-type you pass -- the same data Terraform's
+#     aws_ec2_instance_type data source reads (modules/compute/main.tf), so
+#     this script and `terraform output quota_check` never disagree.
 #   - quota code: inferred from the instance type's leading letter --
 #     "p..." -> L-417A185B ("Running On-Demand P instances"), "g..."/"vt..."
 #     -> L-DB2E81BA ("Running On-Demand G and VT instances"). Override with
@@ -26,16 +25,16 @@
 # terraform apply/destroy and never launches/terminates anything itself.
 #
 # Usage:
-#   ./check_gpu_quota.sh                                            # default plan: 2x p5.48xlarge
-#   ./check_gpu_quota.sh --instance-type g6e.4xlarge --node-count 2 # the alternate G-family profile
-#   ./check_gpu_quota.sh --request 384                              # request an increase to 384 vCPUs
-#   ./check_gpu_quota.sh --region us-west-2                         # check a different region
-#   ./check_gpu_quota.sh --quota-code L-DB2E81BA                    # force a specific quota code
+#   ./check_gpu_quota.sh                                    # default: 1x g6e.2xlarge
+#   ./check_gpu_quota.sh --instance-type g6e.4xlarge         # a bigger single-instance option
+#   ./check_gpu_quota.sh --request 16                        # request an increase to 16 vCPUs
+#   ./check_gpu_quota.sh --region us-west-2                  # check a different region
+#   ./check_gpu_quota.sh --quota-code L-DB2E81BA              # force a specific quota code
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-INSTANCE_TYPE="p5.48xlarge"
-NODE_COUNT=2
+INSTANCE_TYPE="g6e.2xlarge"
+INSTANCE_COUNT=1
 REQUEST_VALUE=""
 QUOTA_CODE_OVERRIDE=""
 SERVICE_CODE="ec2"
@@ -54,8 +53,12 @@ while [[ $# -gt 0 ]]; do
       INSTANCE_TYPE="$2"
       shift 2
       ;;
-    --node-count)
-      NODE_COUNT="$2"
+    --instance-count)
+      # Not a Terraform variable in this design (this stack only ever
+      # creates one instance) -- kept as a manual planning knob in case you
+      # want to check quota headroom for running more than one at once
+      # (e.g. a second scratch instance) without changing the .tf files.
+      INSTANCE_COUNT="$2"
       shift 2
       ;;
     --quota-code)
@@ -80,23 +83,24 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "Region: $REGION"
-echo "Instance type: $INSTANCE_TYPE   Node count: $NODE_COUNT"
+echo "Instance type: $INSTANCE_TYPE   Instance count: $INSTANCE_COUNT"
 echo
 
-# --- Derive per-node vCPUs and EFA support live -- same source Terraform's
-# aws_ec2_instance_type data source reads, no hardcoded lookup table. ---
+# --- Derive vCPUs live -- same source Terraform's aws_ec2_instance_type
+# data source reads, no hardcoded lookup table. (EFA is out of scope for
+# this single-instance design -- g6e.2xlarge doesn't support it anyway --
+# so it's not queried here.) ---
 INSTANCE_INFO=$(aws ec2 describe-instance-types \
   --region "$REGION" \
   --instance-types "$INSTANCE_TYPE" \
-  --query 'InstanceTypes[0].{VCpus:VCpuInfo.DefaultVCpus,Efa:NetworkInfo.EfaSupported}' \
+  --query 'InstanceTypes[0].{VCpus:VCpuInfo.DefaultVCpus}' \
   --output json)
 
-VCPUS_PER_NODE=$(echo "$INSTANCE_INFO" | python3 -c 'import json,sys; print(json.load(sys.stdin)["VCpus"])')
-EFA_SUPPORTED=$(echo "$INSTANCE_INFO" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Efa"])')
-REQUIRED_VCPUS=$(( VCPUS_PER_NODE * NODE_COUNT ))
+VCPUS_PER_INSTANCE=$(echo "$INSTANCE_INFO" | python3 -c 'import json,sys; print(json.load(sys.stdin)["VCpus"])')
+REQUIRED_VCPUS=$(( VCPUS_PER_INSTANCE * INSTANCE_COUNT ))
 
-echo "vCPUs/node: $VCPUS_PER_NODE   EFA supported: $EFA_SUPPORTED"
-echo "Required vCPUs for $NODE_COUNT node(s): $REQUIRED_VCPUS"
+echo "vCPUs/instance: $VCPUS_PER_INSTANCE"
+echo "Required vCPUs for $INSTANCE_COUNT instance(s): $REQUIRED_VCPUS"
 echo
 
 # --- Infer the applicable quota code from the instance type's leading
@@ -139,7 +143,7 @@ QUOTA_NAME=$(aws service-quotas get-service-quota \
   --query 'Quota.QuotaName' --output text)
 
 echo "Current value of \"$QUOTA_NAME\": $CURRENT vCPUs"
-echo "Required for this plan ($NODE_COUNT x $INSTANCE_TYPE): $REQUIRED_VCPUS vCPUs"
+echo "Required for this plan ($INSTANCE_COUNT x $INSTANCE_TYPE): $REQUIRED_VCPUS vCPUs"
 
 if python3 -c "import sys; sys.exit(0 if float('$CURRENT') >= $REQUIRED_VCPUS else 1)"; then
   echo "SUFFICIENT -- current quota already covers this plan."
@@ -171,5 +175,5 @@ if [[ -n "$REQUEST_VALUE" ]]; then
 else
   echo
   echo "No --request value given; not submitting anything. To request an increase (e.g. to exactly $REQUIRED_VCPUS, or more for future headroom):"
-  echo "  $0 --instance-type $INSTANCE_TYPE --node-count $NODE_COUNT --region $REGION --request $REQUIRED_VCPUS"
+  echo "  $0 --instance-type $INSTANCE_TYPE --instance-count $INSTANCE_COUNT --region $REGION --request $REQUIRED_VCPUS"
 fi

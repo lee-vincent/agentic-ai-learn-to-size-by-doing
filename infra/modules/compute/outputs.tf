@@ -1,26 +1,17 @@
-output "instance_ids" {
-  value = aws_instance.gpu[*].id
+output "instance_id" {
+  value = aws_instance.gpu.id
 }
 
-output "private_ips" {
-  value = aws_instance.gpu[*].private_ip
+output "private_ip" {
+  value = aws_instance.gpu.private_ip
 }
 
-output "public_ips" {
-  value = aws_eip.gpu[*].public_ip
+output "public_ip" {
+  value = aws_eip.gpu.public_ip
 }
 
-output "placement_group_name" {
-  value = aws_placement_group.gpu_cluster.name
-}
-
-output "vcpus_per_node" {
+output "vcpus" {
   value = data.aws_ec2_instance_type.gpu.default_vcpus
-}
-
-output "efa_supported" {
-  description = "Whether the configured gpu_instance_type supports EFA (drives the network_interface interface_type in this module -- see main.tf)."
-  value       = local.efa_supported
 }
 
 locals {
@@ -31,10 +22,10 @@ locals {
   gpu_info = tolist(data.aws_ec2_instance_type.gpu.gpus)
 }
 
-output "gpu_count_per_node" {
+output "gpu_count" {
   value = length(local.gpu_info) > 0 ? local.gpu_info[0].count : 0
 }
 
-output "gpu_memory_mib_each" {
+output "gpu_memory_mib" {
   value = length(local.gpu_info) > 0 ? local.gpu_info[0].memory_size : 0
 }

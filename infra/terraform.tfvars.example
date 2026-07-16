@@ -8,36 +8,22 @@ aws_region = "us-east-1"
 project    = "gpu-sizing-lab"
 
 # --- GPU compute ---
-# Default is 2x p5.48xlarge (8x H100 80GB each, 640 GiB VRAM/node, 3200Gbps
-# EFA). See infra/README.md for why, current pricing, and current EFA
-# support. Bump gpu_node_count to 4 for DP=2 x PP=2 combos once Phase 2/3
-# are live; each extra p5.48xlarge node is ~$55/hr on-demand.
-gpu_instance_type = "p5.48xlarge"
-gpu_node_count    = 2
-
-# --- Alternate G-family profile (quota-constrained bring-up) ---
-# If the P-family vCPU quota increase above is still pending (this account
-# has one CASE_OPENED as of 2026-07-15 -- check with
-# `./scripts/check_gpu_quota.sh`), use the ready-made alternate profile
-# instead of editing this file:
-#
-#   terraform plan -var-file=examples/g6e-multinode.tfvars
-#
-# That sets gpu_instance_type = "g6e.4xlarge" and gpu_node_count = 2 (2x
-# 1-GPU L40S nodes, 32 vCPU total, fits the existing 48-vCPU G&VT quota with
-# no increase needed). See infra/README.md's "Alternate G-family profile"
-# section for what it costs, what it can't do (no EFA, no flagship
-# 397B-A17B model), and what it's actually useful for (real multi-node
-# Ray/vLLM/monitoring bring-up on the two smaller lineup models today).
+# Single g6e.2xlarge (1x L40S, 44.7 GiB VRAM, 8 vCPU, 64 GiB RAM). Verified
+# live 2026-07-16 (us-east-1): $2.24208/hr on-demand. Qwen3.6-27B fits its
+# VRAM at FP8 (~29 GiB weights) with ~15 GiB left for KV cache -- see
+# infra/README.md. There is no node-count knob -- this design only ever
+# creates one instance.
+gpu_instance_type = "g6e.2xlarge"
 
 # Leave empty to rely on SSM Session Manager (default). Only set this if you
-# specifically need direct SSH into the nodes.
+# specifically need direct SSH into the instance.
 ssh_ingress_cidrs = []
 # ssh_ingress_cidrs = ["203.0.113.4/32"]
 
-# --- Shared storage ---
-# 2400 GiB comfortably holds the flagship model's FP8 (~378 GiB) + INT4
-# (~220 GiB) checkpoints plus both smaller lineup models at once. Bump if
-# you want the BF16 checkpoint (~751 GiB) cached too, or multiple models'
-# BF16 weights simultaneously.
-fsx_storage_capacity_gib = 2400
+# --- Storage ---
+# Model weights live directly on the root EBS volume (gp3, encrypted) --
+# no FSx, no S3 staging bucket. 300 GiB comfortably holds the OS, the vLLM
+# container image, and the Qwen3.6-27B FP8 checkpoint (~29 GiB) with room to
+# spare. Bump if you also want to keep the INT4/AWQ checkpoint cached
+# alongside FP8.
+root_volume_size_gb = 300

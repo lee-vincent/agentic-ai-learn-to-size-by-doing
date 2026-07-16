@@ -1,13 +1,13 @@
 output "instance_profile_name" {
-  value = aws_iam_instance_profile.gpu_node.name
+  value = aws_iam_instance_profile.gpu_instance.name
 }
 
 output "instance_profile_arn" {
-  value = aws_iam_instance_profile.gpu_node.arn
+  value = aws_iam_instance_profile.gpu_instance.arn
 }
 
 output "role_arn" {
-  value = aws_iam_role.gpu_node.arn
+  value = aws_iam_role.gpu_instance.arn
 }
 
 output "hf_token_parameter_arn" {
