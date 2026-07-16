@@ -34,10 +34,12 @@
      when you actively want Claude in the apply loop.
    Either way, this step is intentionally not part of any autonomous loop — see Guardrails in
    `CLAUDE.md`.
-3. Once infra is up, launch `serving-builder`, `agent-builder`, `loadgen-builder`, and
-   `monitoring-builder` as parallel subagents (each already configured with `isolation: worktree`
-   in its frontmatter), since they touch independent directories and won't collide. Feed each its
-   corresponding phase goal from `GOALS.md`.
+3. Once infra is up, get `serving-builder` working first — Phase 2 (Qwen3.6-27B actually serving
+   on the single L40S) is the milestone that matters most, and everything downstream depends on a
+   live endpoint. Then launch `agent-builder`, `loadgen-builder`, and `monitoring-builder` as
+   parallel subagents (each already configured with `isolation: worktree` in its frontmatter),
+   since they touch independent directories and won't collide. Feed each its corresponding phase
+   goal from `GOALS.md`.
 4. After each subagent reports it believes its phase is done, invoke `checker` against that
    phase's goal text before merging the worktree back. Don't skip this even when the builder
    sounds confident.
@@ -52,11 +54,13 @@ catches what the builder won't notice about itself.
 
 ## 4. The guardrail that matters most for this project specifically
 Most loop-engineering writeups worry about token spend and context bloat ("doom loops"). Here,
-the sharper risk is that a loop retrying a failed multi-node Terraform apply keeps AWS charges
-running whether or not the retries ever succeed — GPU instances that are already up don't stop
-costing money just because a subsequent step is failing. That's why `terraform apply` and any
-instance-launching command are hook-gated behind explicit confirmation, and why the circuit
-breaker trips after 2 consecutive failures instead of letting the loop keep swinging at it.
+the sharper risk is that a loop retrying a failed Terraform apply keeps AWS charges running whether
+or not the retries ever succeed — a GPU instance that's already up doesn't stop costing money just
+because a subsequent step is failing. That's why `terraform apply` and any instance-launching
+command are hook-gated behind explicit confirmation, and why the circuit breaker trips after 2
+consecutive failures instead of letting the loop keep swinging at it. (The scope is now a single
+`g6e.2xlarge`, so the blast radius is one instance — but "one L40S left running overnight" is still
+real money, so the gating stays.)
 
 ## 5. If you keep this lab around for repeated use
 Once Phases 1–5 are stable, a `/loop 30m` on just `experiment-cli-builder`'s output — re-running

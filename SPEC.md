@@ -1,4 +1,12 @@
-# SPEC — GPU/HPC Sizing Lab
+# SPEC — GPU Sizing Lab (single-node, single-GPU)
+
+## Objective
+Get **one** current Qwen model serving on **one** widely-available L40S GPU instance, generate
+synthetic load, and measure how CPU/RAM/GPU/VRAM utilization and inference-quality metrics respond
+as software knobs change. This is a deliberately tightened scope (see "Scope history" at the
+bottom): the earlier draft aimed at a multi-node, multi-GPU, three-model cluster and kept hitting
+real EC2 capacity limits. The fastest path to a working lab is one GPU, one model, no cross-node
+anything.
 
 ## `<metrics>`
 - CPU Utilization
@@ -18,83 +26,96 @@
 - Reasoning level / effort used (observed per run)
 
 ## `<knobs>`
-- Different LLMs with different parameter counts and architectures — see Model Lineup below
-- Parameter precision (FP8 down to INT4)
+These are the knobs that are meaningful on a single GPU:
+- Parameter precision (FP8 and INT4/AWQ — see the note on which the L40S can hold)
 - KV-cache management strategy (PagedAttention, prefix caching, chunked prefill, KV cache
   quantization)
 - Average input length and output length
 - Number of concurrent users
-- LLM parallelism: data parallel, tensor parallel, expert parallel, pipeline/model parallel
 - Decoding algorithm: greedy, parallel sampling, speculative decoding, beam search — confirm
-  current vLLM support level for each before assuming parity across the lineup
-- Reasoning level (effort): how much thinking each request demands — Qwen3.5/3.6's "thinking
-  mode" is the mechanism for this knob; test thinking on vs. off and, where the model exposes it,
-  different effort levels
+  current vLLM support level for each before assuming parity
+- Reasoning level (effort): Qwen's "thinking mode" is the mechanism — test thinking on vs. off
+  and, where the model exposes it, different effort levels
 
-**Serving framework is no longer a knob** — this build is vLLM-only. An earlier draft compared
-vLLM against NVIDIA NIM; that comparison was dropped to simplify the build and avoid NIM's NGC
-licensing overhead. If you want it back later it's a clean re-addition: stand up a second
-`containers/nim/` service behind the same OpenAI-compatible interface.
+**Serving framework is not a knob** — this build is vLLM-only, behind an OpenAI-compatible
+interface.
 
-## Model lineup
-Three current Qwen models (all natively supported by vLLM), chosen to span parameter count,
-dense-vs-MoE architecture, and single-node-vs-true-multi-node infra:
-
-| Model | Architecture | Total / Active Params | Role in this lab |
+## Model — single model
+| Model | Architecture | Params | Why this one |
 |---|---|---|---|
-| **Qwen3.6-27B** | Dense | 27B / 27B | Dense baseline, released April 2026 — the newest and strongest dense model in the family. No expert-routing variable in the mix, so it isolates the effect of precision, KV-cache strategy, and parallelism knobs from MoE routing behavior. Single-node, multi-GPU territory. |
-| **Qwen3.5-35B-A3B** | MoE | 35B / 3B | Small-scale MoE — 256 experts + 1 shared expert, only ~8.6% of total params active per token. This is the cheap end of the expert-parallel knob: real MoE routing behavior, but modest enough to iterate on quickly and to compare directly against the 27B dense model at similar total-parameter scale. |
-| **Qwen3.5-397B-A17B** | MoE | 397B / 17B | Flagship MoE, released Feb 2026. This is where the sizing question gets genuinely interesting, and whether it *needs* multiple nodes depends on node type and precision — don't assume it forces multi-node. Back-of-envelope: BF16 (~2 bytes/param ≈ 800 GB of weights) won't fit a single 8×80 GB node and does force multi-node; FP8 (~400 GB) and INT4 (~200 GB) both fit the weights on one 8×80 GB node, but KV-cache headroom shrinks as context length and concurrency climb. Finding exactly where single-node stops being enough — for your chosen node, precision, and context/concurrency targets — is the whole point of the lab. (Treat those GB figures as estimates to verify against the model card and vLLM's own memory reporting.) Separately, you want a multi-node cluster *regardless* of this model's footprint, because exercising pipeline and data parallel across nodes is an explicit learning goal. |
+| **Qwen3.6-27B** | Dense | 27B | Newest, strongest dense model in the family (released April 2026). Dense means no expert-routing variable, so it cleanly isolates the effect of precision, KV-cache strategy, and concurrency knobs. At FP8 it fits a single L40S with room for KV cache — which is exactly what makes it the right first (and, for now, only) target. |
 
-Two things to verify at build time rather than assume, since published third-party estimates
-vary in reliability:
-- The actual VRAM footprint of each model at each precision setting (FP8 vs. INT4 in particular)
-  — check the current official model card and vLLM's own memory estimation rather than a
-  third-party blog figure.
-- Whether pre-quantized checkpoints (AWQ/GPTQ/FP8) are already published for each model on
-  Hugging Face, or whether `serving-builder` needs to quantize from the BF16 checkpoint itself.
+Verify at build time (don't trust third-party estimates):
+- **VRAM footprint at each precision.** Rough figures to confirm against the current model card
+  and vLLM's own memory reporting: BF16 ≈ 52 GiB (does **not** fit one 44.7 GiB L40S), FP8 ≈ 29
+  GiB (fits, ~15 GiB left for KV cache/activations), INT4/AWQ ≈ 14–15 GiB (fits with the most KV
+  headroom). **FP8 is the default operating point; BF16 is not an option on a single L40S.**
+- **Pre-quantized checkpoints.** Check whether an official FP8 (and/or AWQ/GPTQ INT4) checkpoint
+  is already published on Hugging Face. Prefer a published FP8 checkpoint over on-the-fly
+  quantization — dynamic FP8 from the BF16 weights needs the BF16 checkpoint resident during load,
+  which is awkward on a 44.7 GiB card.
+- Note this is a vision-language model, so the checkpoint includes a vision tower — a modest
+  addition to the footprint even when serving only text/agentic traffic.
+
+## Instance — single instance
+- **`g6e.2xlarge`**: 1× NVIDIA L40S (44.7 GiB VRAM), 8 vCPU, 64 GiB RAM. On-demand **$2.24/hr**
+  in us-east-1 (verified via the AWS Price List API, 2026-07-16). Chosen for low cost + wide
+  availability: it's a single instance with **no cluster placement group** (placement groups, not
+  the GPU itself, were the source of the earlier capacity failures). The 8 vCPU / 64 GiB RAM tier
+  is the reliable floor for loading a 27B checkpoint and handling request + vision preprocessing;
+  `g6e.xlarge` (4 vCPU / 32 GiB) is cheaper but risky, `g6e.4xlarge` gives more headroom if
+  needed.
+- Verify current on-demand pricing and L40S availability in your chosen region/AZ before applying.
 
 ## Architecture summary
-- **Infra**: Terraform, multi-node GPU cluster in a placement group, EFA where supported (verify
-  current instance-family support), shared FSx for Lustre or EFS for model weight caching —
-  important given the size of the 397B-A17B checkpoint.
-- **Serving**: vLLM only, Ray-backed for multi-node tensor/pipeline/data parallel. One
-  OpenAI-compatible `/v1/chat/completions` endpoint per model in the lineup, all launched from
-  the same container image with the model ID and parallelism config passed in as parameters —
-  not three separate container images to maintain. Two flags matter for this lab specifically
-  and are easy to forget: tool calling in OpenAI format needs vLLM launched with
-  `--enable-auto-tool-choice --tool-call-parser qwen3_coder`, and the reasoning-level knob only
-  becomes observable with `--reasoning-parser qwen3` (both per the current Qwen model cards;
-  verify against your installed vLLM version). Note these are vision-language models, so the
-  checkpoint includes a vision tower — a modest addition to the weight footprint even when
-  you're only serving text/agentic traffic.
+- **Infra**: Terraform, one `g6e.2xlarge` in a simple VPC/subnet with a security group. Model
+  weights live on the root EBS volume (sized generously) or a dedicated EBS volume — **no FSx for
+  Lustre, no EFA, no placement group** (all only justified by multi-node, which is out of scope).
+  IAM instance profile with SSM Session Manager access; an optional SSM SecureString slot for an
+  `HF_TOKEN` (the Qwen lineup is Apache-2.0/ungated, so this is provisioned-but-optional).
+- **Serving**: vLLM only, single GPU (no tensor/pipeline/data/expert parallel). One
+  OpenAI-compatible `/v1/chat/completions` endpoint, model ID + precision + KV-cache strategy
+  passed in as parameters. Two flags matter and are easy to forget: tool calling in OpenAI format
+  needs `--enable-auto-tool-choice --tool-call-parser qwen3_coder`, and the reasoning-level knob
+  only becomes observable with `--reasoning-parser qwen3` (per the current Qwen model card; verify
+  against your installed vLLM version).
 - **Agent**: a real tool-calling agent (at minimum a calculator tool and a retrieval/lookup tool)
   targeting the vLLM endpoint, used both as a study subject and as an agentic-shaped load source.
-- **Load generation**: NVIDIA `genai-perf` for raw-endpoint knob-sweep benchmarking, plus a
-  custom harness driving the agent itself for agentic-shaped traffic (multi-turn, variable output
-  length, burstier concurrency) that `genai-perf` alone won't reproduce.
+- **Load generation**: NVIDIA `genai-perf` for raw-endpoint knob-sweep benchmarking, plus a custom
+  harness driving the agent for agentic-shaped traffic (multi-turn, variable output length,
+  burstier concurrency) that `genai-perf` alone won't reproduce.
 - **Monitoring**: Prometheus + Grafana, DCGM Exporter (GPU), Node Exporter (CPU/RAM), vLLM's
-  native Prometheus metrics (which cover TTFT, ITL, TPS, and KV cache hit rate directly), one
-  dashboard combining all metric families per experiment run.
+  native Prometheus metrics (TTFT, ITL, TPS, KV cache hit rate). One dashboard per experiment run.
+  Everything runs on the single node.
 - **Experiment control**: a CLI that toggles each knob, applies the config, runs load for a fixed
   duration, scrapes the metrics window, and appends a tagged row to a results file (CSV/Parquet),
   plus a plotting script for post-sweep comparison.
 
 ## Deliverables checklist
-- [ ] Terraform modules: networking, multi-node GPU compute/cluster, shared storage, IAM/secrets
-- [ ] Container build files: vLLM (parameterized by model + parallelism config), custom agent,
-  load generators
-- [ ] Multi-node orchestration config (Ray) for tensor/pipeline/data/expert parallel
+- [ ] Terraform: networking, one GPU instance, EBS for weights, IAM/instance profile (+ optional
+  HF_TOKEN slot)
+- [ ] vLLM container (parameterized by model + precision + KV-cache strategy), custom agent, load
+  generators
 - [ ] Monitoring stack: Prometheus, Grafana (dashboard JSON), DCGM Exporter, Node Exporter
 - [ ] Experiment control CLI + structured results storage + comparison plotting
 - [ ] Cost visibility: running-instance/cost banner every session, notify-only billing alarm,
   single documented teardown command
-- [ ] README: prerequisites (AWS quota request, HuggingFace token if any lineup model is gated),
-  quickstart, how to run a sweep, how to tear down, current approximate hourly cost for the
-  instance types selected
+- [ ] README: prerequisites (AWS quota, HuggingFace token if ever needed), quickstart, how to run
+  a sweep, how to tear down, current approximate hourly cost
 
 ## Verify while building, don't assume
-- Current EFA support and current on-demand pricing for the selected GPU instance family
-- Actual VRAM footprint of each of the three lineup models at each precision setting, and whether
-  pre-quantized checkpoints already exist — check current model cards, not third-party estimates
-- Whether any lineup model requires a gated HuggingFace token
+- Current on-demand pricing and L40S availability for `g6e.2xlarge` in your region
+- Actual VRAM footprint of Qwen3.6-27B at FP8 and INT4, and whether pre-quantized checkpoints
+  already exist — check the current model card and vLLM's memory reporting, not a blog figure
+- Whether the model requires a gated HuggingFace token (expected: no)
+
+## Scope history — what was deliberately dropped (and how to add it back)
+The earlier version of this spec targeted a multi-node, multi-GPU cluster serving three models
+(Qwen3.6-27B dense, Qwen3.5-35B-A3B MoE, Qwen3.5-397B-A17B flagship MoE) and exercising data,
+tensor, pipeline, and expert parallelism. That was over-ambitious for the immediate goal and ran
+into real EC2 GPU capacity limits. **Out of scope for now** (each is a clean future re-addition
+once the single-GPU lab is proven):
+- The two MoE models and the expert-parallel knob
+- Multi-node and multi-GPU parallelism (data/tensor/pipeline/expert) — and with it FSx for Lustre,
+  EFA, and cluster placement groups
+- The "different LLMs" knob (only one model now)

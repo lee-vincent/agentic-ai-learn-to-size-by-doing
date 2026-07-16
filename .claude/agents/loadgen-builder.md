@@ -10,8 +10,8 @@ isolation: worktree
 You build `loadgen/`. Read `SPEC.md` first.
 
 - `genai-perf` configs for direct knob-sweep benchmarking against the raw vLLM endpoint — this is
-  the tool of record for TTFT/ITL/TPS/latency-per-output-token. Parameterize by which of the
-  three lineup models is currently being served, so the same config works across all three.
+  the tool of record for TTFT/ITL/TPS/latency-per-output-token. Parameterize by model name/endpoint
+  (currently Qwen3.6-27B) so the config isn't hardcoded to one deployment.
 - A separate harness that drives `agent/`'s agent at varying concurrency levels, since genai-perf
   alone benchmarks raw completions and won't reproduce agentic traffic shape (tool-call loops,
   multi-turn sessions).
