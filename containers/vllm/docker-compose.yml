@@ -1,0 +1,77 @@
+# containers/vllm/docker-compose.yml
+#
+# Run path for the target host (one g6e.2xlarge: 1x L40S, 44.7 GiB VRAM,
+# 8 vCPU, 64 GiB RAM, 300 GiB EBS root). Single GPU, single container, no
+# Ray, no tensor/pipeline/data/expert parallelism.
+#
+# Usage on the GPU host:
+#   cd containers/vllm
+#   docker compose build
+#   docker compose up -d
+#   docker compose logs -f vllm
+#
+# By default this drives vLLM purely through environment variables (see the
+# `environment:` block below and README.md). To use a mounted config file
+# instead (its values take precedence over the environment: block), run:
+#   cp config/config.env.example config/config.env   # then edit config.env
+#   docker compose -f docker-compose.yml -f docker-compose.config-file.yml up -d
+#
+# Requires the NVIDIA Container Toolkit installed on the host so the
+# `driver: nvidia` device reservation below resolves (verify with
+# `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
+# before bringing this up).
+services:
+  vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VLLM_IMAGE_TAG: ${VLLM_IMAGE_TAG:-v0.25.1}
+    image: gpu-sizing-lab-vllm:${VLLM_IMAGE_TAG:-v0.25.1}
+    container_name: vllm-qwen3_6-27b
+    restart: unless-stopped
+    ipc: host   # vLLM/PyTorch shared-memory requirement for its worker processes
+    ports:
+      - "${PORT:-8000}:8000"   # OpenAI-compatible API + /metrics (Prometheus) + /health
+    environment:
+      # Every value here is optional -- entrypoint.sh applies sane single-GPU
+      # defaults for anything unset. Override via a real .env file, shell
+      # exports before `docker compose up`, or the mounted config file below
+      # (which takes precedence over all of these -- see README.md).
+      MODEL_ID: ${MODEL_ID:-}
+      QUANTIZATION: ${QUANTIZATION:-}
+      SERVED_MODEL_NAME: ${SERVED_MODEL_NAME:-}
+      GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION:-}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-}
+      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-}
+      KV_CACHE_DTYPE: ${KV_CACHE_DTYPE:-}
+      ENABLE_PREFIX_CACHING: ${ENABLE_PREFIX_CACHING:-}
+      ENABLE_CHUNKED_PREFILL: ${ENABLE_CHUNKED_PREFILL:-}
+      ENABLE_TOOL_CALLING: ${ENABLE_TOOL_CALLING:-}
+      TOOL_CALL_PARSER: ${TOOL_CALL_PARSER:-}
+      REASONING_PARSER: ${REASONING_PARSER:-}
+      LANGUAGE_MODEL_ONLY: ${LANGUAGE_MODEL_ONLY:-}
+      MODEL_CACHE_DIR: /root/.cache/huggingface
+      HF_TOKEN: ${HF_TOKEN:-}
+      EXTRA_VLLM_ARGS: ${EXTRA_VLLM_ARGS:-}
+    volumes:
+      # Persistent model weight cache -- survives `docker compose down` /
+      # container recreation. Point this at the host's EBS-backed model dir
+      # (infra's user_data creates /opt/models on the g6e.2xlarge host).
+      - ${MODEL_CACHE_DIR_HOST:-/opt/models}:/root/.cache/huggingface
+      # No config-file mount by default (pure env-var driven -- see the
+      # `environment:` block above). To layer on a mounted config file
+      # instead, use docker-compose.config-file.yml (see comment at top).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1          # single GPU -- this is the whole point of Phase 2
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s   # first boot downloads ~29 GiB of weights if not cached

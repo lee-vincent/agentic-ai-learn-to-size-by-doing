@@ -1,0 +1,71 @@
+# containers/vllm/systemd/vllm.service
+#
+# Alternative to docker-compose for the target host (one g6e.2xlarge). Runs
+# the same image via a plain `docker run`, managed by systemd instead of
+# Compose, so it survives reboots and integrates with `systemctl`/`journalctl`.
+#
+# Install:
+#   sudo cp containers/vllm/systemd/vllm.service /etc/systemd/system/vllm.service
+#   sudo mkdir -p /opt/models   # persistent model cache -- created by infra
+#                                # user_data on the target host; safe to
+#                                # re-run if it already exists.
+#   # Optional: sudo cp containers/vllm/config/config.env.example /opt/vllm/config.env
+#   #           then edit /opt/vllm/config.env and uncomment the mount below.
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vllm.service
+#   journalctl -u vllm.service -f
+#
+# Build the image first (from containers/vllm/):
+#   docker build -t gpu-sizing-lab-vllm:v0.25.1 .
+#
+# Env overrides: either edit the `Environment=` lines below, drop an
+# /etc/vllm.env EnvironmentFile (uncomment below), or mount a config file
+# per the -v line (commented out by default -- see config/config.env.example).
+[Unit]
+Description=vLLM OpenAI-compatible server (Qwen3.6-27B, single L40S GPU)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+
+# The `-e VAR` lines in ExecStart below (no `=value`) pass through whatever
+# value VAR has in *this systemd service's own environment* -- which is
+# empty unless you set it here. Either add explicit Environment= lines
+# (uncomment/edit examples below) or use an EnvironmentFile; if you do
+# neither, entrypoint.sh's built-in defaults apply (Qwen/Qwen3.6-27B-FP8,
+# gpu-memory-utilization=0.90, max-model-len=32768, etc.).
+# EnvironmentFile=-/etc/vllm.env
+# Environment=MODEL_ID=Qwen/Qwen3.6-27B-FP8
+# Environment=MAX_MODEL_LEN=32768
+# Environment=GPU_MEMORY_UTILIZATION=0.90
+
+ExecStartPre=-/usr/bin/docker rm -f vllm-qwen3_6-27b
+ExecStart=/usr/bin/docker run --rm \
+  --name vllm-qwen3_6-27b \
+  --gpus all \
+  --ipc=host \
+  -p 8000:8000 \
+  -v /opt/models:/root/.cache/huggingface \
+  -e MODEL_ID \
+  -e QUANTIZATION \
+  -e SERVED_MODEL_NAME \
+  -e GPU_MEMORY_UTILIZATION \
+  -e MAX_MODEL_LEN \
+  -e MAX_NUM_SEQS \
+  -e KV_CACHE_DTYPE \
+  -e ENABLE_PREFIX_CACHING \
+  -e ENABLE_CHUNKED_PREFILL \
+  -e ENABLE_TOOL_CALLING \
+  -e TOOL_CALL_PARSER \
+  -e REASONING_PARSER \
+  -e LANGUAGE_MODEL_ONLY \
+  -e HF_TOKEN \
+  -e EXTRA_VLLM_ARGS \
+  gpu-sizing-lab-vllm:v0.25.1
+ExecStop=/usr/bin/docker stop -t 30 vllm-qwen3_6-27b
+
+[Install]
+WantedBy=multi-user.target

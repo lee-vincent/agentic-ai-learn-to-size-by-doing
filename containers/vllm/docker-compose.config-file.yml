@@ -1,0 +1,19 @@
+# containers/vllm/docker-compose.config-file.yml
+#
+# Optional overlay: mounts a real config/config.env into the container so
+# vLLM is driven by a file instead of (or on top of) environment variables.
+# Its values take precedence over the `environment:` block in
+# docker-compose.yml (see entrypoint.sh precedence rules).
+#
+# Usage:
+#   cp config/config.env.example config/config.env   # then edit config.env
+#   docker compose -f docker-compose.yml -f docker-compose.config-file.yml up -d
+#
+# Requires config/config.env to exist as a *file* before `up` -- Compose
+# will otherwise create an empty directory at that path on the host and the
+# bind mount will make /etc/vllm/config.env a directory in the container,
+# which entrypoint.sh's `source` will fail on.
+services:
+  vllm:
+    volumes:
+      - ./config/config.env:/etc/vllm/config.env:ro
