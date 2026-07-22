@@ -1,0 +1,68 @@
+[
+  {
+    "id": "l40s-gpu",
+    "title": "NVIDIA L40S GPU specs",
+    "text": "The NVIDIA L40S GPU has 44.7 GiB of VRAM. It is the GPU in the lab's g6e.2xlarge instance.",
+    "tags": ["l40s", "gpu", "vram", "memory"]
+  },
+  {
+    "id": "g6e-2xlarge",
+    "title": "g6e.2xlarge instance specs",
+    "text": "g6e.2xlarge has 1x NVIDIA L40S GPU (44.7 GiB VRAM), 8 vCPUs, and 64 GiB of system RAM. On-demand price was verified at $2.24/hr in us-east-1 (AWS Price List API, 2026-07-16). No FSx, no EFA, no placement group.",
+    "tags": ["g6e.2xlarge", "instance", "ec2", "price", "cost", "vcpu", "ram"]
+  },
+  {
+    "id": "qwen3.6-27b-arch",
+    "title": "Qwen3.6-27B architecture",
+    "text": "Qwen3.6-27B is a dense 27B-parameter hybrid Gated-DeltaNet + attention model (model_type qwen3_5, architecture Qwen3_5ForConditionalGeneration). Only 16 of its 64 layers (full_attention_interval=4) use full attention with a token-indexed KV cache; the other 48 layers hold a fixed-size-per-sequence linear-attention recurrent state that scales with concurrency, not context length. It nominally ships a vision tower (image-text-to-text) but this lab serves it text-only via --language-model-only.",
+    "tags": ["qwen3.6-27b", "architecture", "gated-deltanet", "attention", "dense", "vlm", "vision"]
+  },
+  {
+    "id": "qwen3.6-27b-fp8",
+    "title": "Qwen3.6-27B-FP8 checkpoint size",
+    "text": "Qwen/Qwen3.6-27B-FP8 is Qwen's own published, pre-quantized FP8 checkpoint (fine-grained block-128 FP8, e4m3, dynamic activation scheme) -- not an on-the-fly quantization. Measured weight footprint: 28.75 GiB across the language-model shards, an mtp.safetensors speculative head, and an outside.safetensors with embeddings/vision tower.",
+    "tags": ["qwen3.6-27b", "fp8", "checkpoint", "weights", "size", "quantization"]
+  },
+  {
+    "id": "vllm-tool-calling",
+    "title": "vLLM tool-calling flags",
+    "text": "vLLM only emits OpenAI-format tool_calls when launched with --enable-auto-tool-choice --tool-call-parser qwen3_coder. Without both flags the server will not produce tool_calls at all, regardless of what tools are passed in the request.",
+    "tags": ["vllm", "tool", "tool_calls", "function", "calling", "qwen3_coder", "flags"]
+  },
+  {
+    "id": "vllm-reasoning",
+    "title": "vLLM reasoning / thinking-mode flags",
+    "text": "vLLM surfaces Qwen3.6's thinking-mode output as a separate reasoning_content field on the response message when launched with --reasoning-parser qwen3. Thinking mode itself is toggled per-request via chat_template_kwargs.enable_thinking (true/false); a server-wide default can be set with --default-chat-template-kwargs.",
+    "tags": ["vllm", "reasoning", "thinking", "reasoning_content", "qwen3", "enable_thinking"]
+  },
+  {
+    "id": "metric-ttft",
+    "title": "Time to First Token (TTFT)",
+    "text": "TTFT is the time from when a request is submitted to when the first output token is generated. It is exposed by vLLM as the vllm:time_to_first_token_seconds Prometheus metric.",
+    "tags": ["ttft", "metric", "latency", "first", "token"]
+  },
+  {
+    "id": "metric-itl",
+    "title": "Inter-Token Latency (ITL)",
+    "text": "ITL is the time between generating consecutive output tokens after the first one. It is exposed by vLLM as the vllm:inter_token_latency_seconds Prometheus metric.",
+    "tags": ["itl", "metric", "latency", "inter-token"]
+  },
+  {
+    "id": "metric-tat",
+    "title": "Turnaround Time (TAT)",
+    "text": "TAT is the total clock time from user submission to final token delivery, measured at the client/agent layer because it spans the full round trip including any agent reasoning and tool-calling steps, not just raw token generation. This is why the agent itself, not the server, logs TAT.",
+    "tags": ["tat", "turnaround", "metric", "latency", "client"]
+  },
+  {
+    "id": "metric-kv-cache-hit-rate",
+    "title": "KV cache hit rate",
+    "text": "KV cache hit rate is computed by dividing vllm:prefix_cache_hits by vllm:prefix_cache_queries. It measures how often prefix caching lets vLLM reuse previously computed KV cache blocks instead of recomputing them.",
+    "tags": ["kv cache", "hit rate", "prefix cache", "metric", "pagedattention"]
+  },
+  {
+    "id": "kv-cache-management",
+    "title": "KV-cache management strategy knobs",
+    "text": "PagedAttention is always on in vLLM. The operator-facing KV-cache management knobs on top of it are prefix caching (--enable-prefix-caching), chunked prefill (--enable-chunked-prefill), and KV cache quantization (--kv-cache-dtype, e.g. fp8_e4m3 to roughly halve KV cache bytes per token).",
+    "tags": ["kv cache", "pagedattention", "prefix caching", "chunked prefill", "kv-cache-dtype"]
+  }
+]
