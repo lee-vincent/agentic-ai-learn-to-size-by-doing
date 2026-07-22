@@ -26,7 +26,13 @@ secrets.tfvars
 __pycache__/
 *.pyc
 .venv/
+.venv*/
 venv/
+
+# loadgen — generated run artifacts (genai-perf sweeps, agent-harness session logs); keep the
+# directory itself (see loadgen/results/.gitkeep) but not what a run drops into it.
+loadgen/results/*
+!loadgen/results/.gitkeep
 
 # Editor / OS
 .DS_Store

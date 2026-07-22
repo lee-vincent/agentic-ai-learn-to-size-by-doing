@@ -1,0 +1,69 @@
+# loadgen/genai-perf/config.yaml
+#
+# Canonical genai-perf config for direct knob-sweep benchmarking against the raw vLLM
+# OpenAI-compatible endpoint (Phase 3 / SPEC.md "Load generation" — genai-perf is the tool of
+# record for TTFT/ITL/TPS/latency-per-output-token).
+#
+# Schema verified against the REAL installed genai-perf 0.0.16 (`genai-perf create-template`),
+# not guessed -- see loadgen/genai-perf/README.md "Verification" for how.
+#
+# This file holds sane Qwen3.6-27B-on-vLLM defaults so it's runnable as-is:
+#   genai-perf config -f loadgen/genai-perf/config.yaml
+#
+# Every value below is meant to be overridden per SPEC.md's knobs (avg input length, avg output
+# length, concurrent-user count) without editing this file, via:
+#   genai-perf config -f loadgen/genai-perf/config.yaml --override-config <flags...>
+# or, more conveniently, via loadgen/genai-perf/run_sweep.sh, which builds exactly this override
+# invocation from environment variables / CLI flags. See that script and its README for the
+# recommended entrypoint -- this file is the checked-in source of truth it overrides.
+
+# --- Model (knob: which model / served name) --------------------------------------------------
+# Override: --model / -m, or MODEL_ID in run_sweep.sh
+model_names: Qwen/Qwen3.6-27B-FP8
+
+# --- Endpoint (knob: which deployment) ---------------------------------------------------------
+endpoint:
+  type: chat              # /v1/chat/completions -- matches vLLM's OpenAI-compatible route
+  streaming: True          # required for TTFT/ITL (per-token timing); TPS/latency alone don't need it
+  # Override: --url / -u, or BASE_URL in run_sweep.sh. Default assumes the vLLM container's
+  # published port (containers/vllm/docker-compose.yml default PORT=8000) reachable from this
+  # host -- i.e. run genai-perf ON the g6e.2xlarge host, or tunnel 8000 to wherever it runs.
+  url: http://localhost:8000
+
+# --- Perf Analyzer stimulus (knob: concurrent-user count) -------------------------------------
+perf_analyzer:
+  stimulus: {'concurrency': 1}   # single-point default; use analyze: below (or run_sweep.sh) to sweep
+  warmup_request_count: 2
+  stability_percentage: 999      # effectively disables PA's own stability gate; we control request_count directly
+  measurement:
+    mode: request_count          # deterministic: N requests measured, not a wall-clock window
+    num: 20                      # override per concurrency level -- see run_sweep.sh (request_count >= concurrency)
+
+# --- Built-in concurrency sweep (alternative to run_sweep.sh's loop) ---------------------------
+# Uncomment to make a single `genai-perf config -f config.yaml` call sweep concurrency itself
+# (produces one artifact dir per level + a combined analyze_export_genai_perf.csv). Overridable
+# from the CLI with --override-config --sweep-range/--sweep-list (see README "Verified" section).
+# analyze:
+#   concurrency:
+#     start: 1
+#     stop: 16
+
+# --- Input (knobs: avg input length, avg output length) ----------------------------------------
+input:
+  num_dataset_entries: 100   # unique synthetic prompts sampled/reused for the run
+  synthetic_tokens:
+    mean: 200                # avg input length (tokens) -- SPEC.md knob. Override: --isl / ISL_MEAN
+    stddev: 20
+  output_tokens:
+    mean: 200                # avg output length (tokens) -- SPEC.md knob. Override: --osl / OSL_MEAN
+    stddev: 20
+
+# --- Output ---------------------------------------------------------------------------------
+output:
+  artifact_directory: loadgen/results/genai-perf   # override: --artifact-dir / ARTIFACT_DIR
+  generate_plots: False
+
+# --- Tokenizer (must match the served model for accurate ISL/OSL accounting) -------------------
+tokenizer:
+  name: Qwen/Qwen3.6-27B-FP8
+  trust_remote_code: False   # flip to True if a pinned transformers version needs it for qwen3_5 arch
