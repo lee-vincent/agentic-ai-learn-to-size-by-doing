@@ -1,0 +1,112 @@
+# monitoring/docker-compose.yml
+#
+# Phase 4 of the GPU Sizing Lab (see repo-root SPEC.md / GOALS.md): Prometheus + Grafana +
+# DCGM Exporter + Node Exporter, all on the SAME single g6e.2xlarge node that already runs
+# vLLM (containers/vllm/docker-compose.yml, container name `vllm-qwen3_6-27b`, publishing
+# 8000:8000 on the host). This is a SEPARATE compose project -- it does not touch, extend, or
+# depend on the vLLM compose file; it only scrapes vLLM's existing /metrics endpoint over the
+# host network.
+#
+# Networking choice: every service here uses `network_mode: host` rather than a bridge network
+# + extra_hosts. Rationale:
+#   - vLLM is already published on the HOST's port 8000 (not just its own container network),
+#     so the simplest way for Prometheus to reach it is to also be in the host network
+#     namespace and scrape `localhost:8000` -- no host-gateway plumbing needed.
+#   - Node Exporter needs host network + host PID namespace anyway for accurate host-level
+#     CPU/RAM/filesystem metrics (this is the standard upstream deployment pattern, not
+#     something specific to this repo).
+#   - DCGM Exporter talks to the host's NVIDIA driver/NVML directly; host networking sidesteps
+#     any bridge-network GPU-metrics quirks and matches NVIDIA's own reference examples.
+#   - Consequence: every service's `ports:` mapping is meaningless under host networking (the
+#     process just binds directly to the host port it defaults to) and is therefore omitted --
+#     see the per-service comments below for which host port each one owns. This keeps
+#     `docker compose config` free of the "published ports are discarded" runtime warning.
+#   - This means all four services bind directly to 0.0.0.0 on the host's network stack, which
+#     matches the deployment brief: SG already restricts 9090/3000/9100/9400 to the VPC: only
+#     operators reach them, via SSM port-forward (see README.md).
+#
+# Usage on the GPU host (after vLLM is already up via containers/vllm/):
+#   cd monitoring
+#   cp .env.example .env   # edit GF_SECURITY_ADMIN_PASSWORD / image tags if desired
+#   docker compose up -d
+#   docker compose logs -f prometheus grafana
+#
+# Requires the NVIDIA Container Toolkit (already installed per this host's brief) for the
+# dcgm-exporter GPU device reservation to resolve.
+services:
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_IMAGE_TAG:-v3.13.1}
+    container_name: gpu-sizing-lab-prometheus
+    restart: unless-stopped
+    network_mode: host   # binds 0.0.0.0:9090 on the host; scrapes localhost:8000/9100/9400
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.listen-address=0.0.0.0:9090"
+      - "--web.enable-lifecycle"   # allows `curl -X POST localhost:9090/-/reload` after edits
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_IMAGE_TAG:-13.1.1}
+    container_name: gpu-sizing-lab-grafana
+    restart: unless-stopped
+    network_mode: host   # binds 0.0.0.0:3000 on the host; talks to Prometheus at localhost:9090
+    depends_on:
+      - prometheus
+    environment:
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-gpusizinglab}
+      # Anonymous Viewer access so the `checker` subagent (and anyone with an SSM port-forward)
+      # can hit the dashboard/API unauthenticated -- read-only, no admin capability granted.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_NAME: "Main Org."
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      # This is a single-operator measurement lab, not a public multi-tenant Grafana -- signup/
+      # org creation stay off regardless of the anonymous-viewer allowance above.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+
+  node-exporter:
+    image: prom/node-exporter:${NODE_EXPORTER_IMAGE_TAG:-v1.12.1}
+    container_name: gpu-sizing-lab-node-exporter
+    restart: unless-stopped
+    network_mode: host   # binds 0.0.0.0:9100 on the host
+    pid: host            # host PID namespace -- needed for accurate per-process/host CPU/RAM view
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--web.listen-address=0.0.0.0:9100"
+      # Exclude the bind-mounted pseudo/host filesystems themselves so filesystem metrics
+      # reflect the host's real mounts, not this container's view of them.
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:${DCGM_EXPORTER_IMAGE_TAG:-4.5.2-4.8.1-ubuntu22.04}
+    container_name: gpu-sizing-lab-dcgm-exporter
+    restart: unless-stopped
+    network_mode: host   # binds 0.0.0.0:9400 on the host
+    cap_add:
+      - SYS_ADMIN        # required by DCGM to access NVML/GPU profiling counters
+    environment:
+      DCGM_EXPORTER_LISTEN: ":9400"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1    # single GPU -- matches the rest of this lab (SPEC.md: no multi-GPU)
+              capabilities: [gpu]
+
+volumes:
+  prometheus_data:
+  grafana_data:
