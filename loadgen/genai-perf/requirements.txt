@@ -1,0 +1,13 @@
+# loadgen/genai-perf/requirements.txt
+#
+# Pin for reproducibility. Install into a venv -- this OS's system Python is PEP 668
+# externally-managed and blocks a plain `pip install`:
+#
+#   python3 -m venv .venv-genai-perf
+#   source .venv-genai-perf/bin/activate
+#   pip install -r loadgen/genai-perf/requirements.txt
+#
+# Version verified installable and runnable end to end during this build (2026-07-21):
+# `pip install genai-perf` resolves to NVIDIA's real GenAI-Perf package (bundles the
+# `perf_analyzer` binary as a dependency) -- see ../README.md "Verified locally vs. deferred".
+genai-perf==0.0.16
