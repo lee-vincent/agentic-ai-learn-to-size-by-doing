@@ -15,6 +15,9 @@ crash.*.log
 # Secrets / credentials — nothing here should ever be committed
 .env
 .env.*
+# .env.example files are templates, not secrets — keep them tracked
+!.env.example
+!*/.env.example
 *.pem
 *_rsa
 *_ed25519

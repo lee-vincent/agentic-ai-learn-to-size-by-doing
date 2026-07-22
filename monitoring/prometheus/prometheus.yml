@@ -1,0 +1,55 @@
+# monitoring/prometheus/prometheus.yml
+#
+# Scrape config for the GPU Sizing Lab, Phase 4. All targets are `localhost` because Prometheus
+# runs with `network_mode: host` (see docker-compose.yml's networking-choice comment) on the same
+# single g6e.2xlarge node as every target it scrapes:
+#   - vllm         -> vllm-qwen3_6-27b container, published on the host at 8000 (containers/vllm/)
+#   - node         -> node-exporter, this compose project, host port 9100
+#   - dcgm         -> dcgm-exporter, this compose project, host port 9400
+#   - prometheus   -> itself, host port 9090
+#
+# Scrape interval: this is a measurement lab, not a production monitoring stack, so we favor a
+# tight 5s interval on the three "real signal" jobs (vllm/node/dcgm) to resolve short experiment
+# runs. The self-scrape can stay slower.
+global:
+  scrape_interval: 15s       # default for any job that doesn't override it below
+  evaluation_interval: 15s
+  external_labels:
+    lab: gpu-sizing-lab
+
+scrape_configs:
+  # vLLM's own native Prometheus metrics -- TTFT, ITL, KV cache usage/hit-rate, token counters,
+  # running/waiting request gauges, etc. Do NOT point this at a custom exporter; vLLM exposes
+  # these natively (see containers/vllm/README.md's "Endpoints" section for the exact `vllm:*`
+  # series names this pinned vLLM v0.25.1 build exposes).
+  - job_name: vllm
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:8000"]
+        labels:
+          service: vllm
+          model: "Qwen3.6-27B-FP8"
+
+  # Node Exporter -- host CPU/RAM/disk/network.
+  - job_name: node
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["localhost:9100"]
+        labels:
+          service: node-exporter
+
+  # DCGM Exporter -- GPU utilization, VRAM (framebuffer) used/free, power draw, clocks.
+  - job_name: dcgm
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["localhost:9400"]
+        labels:
+          service: dcgm-exporter
+
+  # Prometheus scraping itself -- useful for confirming the stack is alive, not a lab metric.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: prometheus

@@ -1,0 +1,18 @@
+# monitoring/grafana/provisioning/datasources/prometheus.yml
+#
+# Provisions the single Prometheus datasource this lab needs. Grafana runs with
+# `network_mode: host` (see ../../../docker-compose.yml), so it reaches Prometheus -- which is
+# also on the host network, bound to 0.0.0.0:9090 -- via plain `localhost`.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus            # fixed uid so the dashboard JSON can reference it directly
+    type: prometheus
+    access: proxy
+    url: http://localhost:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 5s         # matches prometheus.yml's scrape_interval for vllm/node/dcgm
+      httpMethod: POST

@@ -1,0 +1,18 @@
+# monitoring/grafana/provisioning/dashboards/dashboards.yml
+#
+# Dashboard provider config -- tells Grafana to load every dashboard JSON file in this same
+# directory (just gpu-sizing-lab.json for now) at startup and keep it in sync with the file.
+apiVersion: 1
+
+providers:
+  - name: gpu-sizing-lab
+    orgId: 1
+    folder: ""                       # General folder -- one dashboard, no need to nest it
+    type: file
+    disableDeletion: false
+    editable: true                   # operators may tweak panels in the UI; file is the source
+    updateIntervalSeconds: 30        # re-read the JSON file periodically for quick iteration
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false
