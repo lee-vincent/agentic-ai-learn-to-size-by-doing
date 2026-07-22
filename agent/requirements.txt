@@ -1,0 +1,5 @@
+# Runtime dependency: the OpenAI Python SDK, used purely as a client for vLLM's
+# OpenAI-compatible /v1/chat/completions endpoint (base_url is overridden to point at vLLM --
+# nothing here talks to OpenAI's own API). Pinned to the major version verified during this
+# build (see README.md "Verification").
+openai>=2.0,<3.0

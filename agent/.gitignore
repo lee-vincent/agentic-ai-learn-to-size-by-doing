@@ -1,0 +1,6 @@
+# Scoped to agent/ so this doesn't need to touch the shared repo-root .gitignore (other builder
+# subagents are working in parallel worktrees on their own directories).
+.venv/
+logs/
+__pycache__/
+*.pyc

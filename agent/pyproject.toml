@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpu-sizing-lab-agent"
+version = "0.1.0"
+description = "Tool-calling agent for the GPU Sizing Lab (Phase 3) -- targets a vLLM OpenAI-compatible endpoint."
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=2.0,<3.0",
+]
+
+[tool.setuptools]
+packages = ["agent"]
