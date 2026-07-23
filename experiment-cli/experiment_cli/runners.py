@@ -105,10 +105,12 @@ def run_genai_perf(
         "MODEL_ID": model,
         "SERVED_MODEL_NAME": served_model_name,
         "BASE_URL": base_url,
-        "ISL_MEAN": str(isl_mean),
-        "ISL_STDDEV": str(isl_stddev),
-        "OSL_MEAN": str(osl_mean),
-        "OSL_STDDEV": str(osl_stddev),
+        # genai-perf's --synthetic-input-tokens-mean/--output-tokens-mean take ints only; a
+        # "200.0" from float-typed config is rejected with "invalid int value", so round here.
+        "ISL_MEAN": str(int(round(isl_mean))),
+        "ISL_STDDEV": str(int(round(isl_stddev))),
+        "OSL_MEAN": str(int(round(osl_mean))),
+        "OSL_STDDEV": str(int(round(osl_stddev))),
         "CONCURRENCY_LIST": str(concurrency),
         "REQUESTS_PER_CONCURRENCY": str(requests_per_concurrency),
         "WARMUP_REQUESTS": str(warmup_requests),
