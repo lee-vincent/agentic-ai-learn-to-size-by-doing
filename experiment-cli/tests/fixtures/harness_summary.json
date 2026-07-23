@@ -1,0 +1,22 @@
+{
+  "base_url": "http://localhost:8098/v1",
+  "model": "Qwen/Qwen3.6-27B-FP8",
+  "engine": "cli",
+  "concurrency": 4,
+  "num_sessions_requested": 12,
+  "num_sessions_completed": 12,
+  "num_sessions_ok": 12,
+  "isl_mean": 30.0,
+  "osl_hint_mean": 80.0,
+  "arrival_pattern": "closed",
+  "wall_clock_seconds": 9.412,
+  "sessions_per_sec": 1.275,
+  "tat_seconds": {
+    "count": 12,
+    "avg": 2.734,
+    "min": 1.802,
+    "max": 4.115,
+    "p50": 2.601,
+    "p90": 3.882
+  }
+}
