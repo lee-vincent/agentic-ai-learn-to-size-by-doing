@@ -1,0 +1,17 @@
+{
+  "tool": "genai-perf",
+  "started_at": "2026-07-23T14:43:47Z",
+  "model_id": "Qwen/Qwen3.6-27B-FP8",
+  "served_model_name": "Qwen/Qwen3.6-27B-FP8",
+  "base_url": "http://localhost:8000",
+  "isl_mean": 200,
+  "isl_stddev": 20,
+  "osl_mean": 200,
+  "osl_stddev": 20,
+  "concurrency_list": "8",
+  "requests_per_concurrency": 10,
+  "streaming": true,
+  "endpoint_type": "completions",
+  "ignore_eos": true,
+  "artifact_dir": "experiment-cli/results/genai-perf/concurrency-8-02a95078"
+}

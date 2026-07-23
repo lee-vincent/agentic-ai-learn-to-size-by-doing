@@ -1,0 +1,3 @@
+session_id,status,error,tat_seconds,harness_observed_seconds,num_model_calls,num_tool_calls,prompt_tokens,completion_tokens,log_path,engine
+9c9dc815-0847-4bdd-8546-bc0994039765,ok,,23.258,24.06144468698767,2,1,1906,380,./logs/session_9c9dc815-0847-4bdd-8546-bc0994039765.jsonl,cli
+ff7c9d1e-e447-4f64-9a5e-436cd87c5189,ok,,23.384,24.165874413010897,2,1,2287,382,./logs/session_ff7c9d1e-e447-4f64-9a5e-436cd87c5189.jsonl,cli
