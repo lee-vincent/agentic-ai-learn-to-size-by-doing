@@ -1,0 +1,26 @@
+# experiment-cli/sweeps/reasoning_effort_off_high.yaml
+#
+# Bonus/nice-to-have knob (not the required one -- see sweeps/concurrency_1_8.json for that):
+# thinking-mode on vs. off. Demonstrates the YAML-lite config format (see README.md "Sweep config
+# format" for exactly what subset of YAML experiment_cli/config.py's loader accepts) and the
+# generic knob abstraction picking up a second knob with zero changes to cli.py/knobs.py's
+# registered-knob machinery.
+#
+# CAVEAT (see knobs.py / README.md "Extension points"): this only reaches the agent harness --
+# genai-perf's raw completions endpoint (run_sweep.sh's ENDPOINT_TYPE=completions default)
+# bypasses the chat template/reasoning parser entirely, so this knob's genai-perf-sourced columns
+# (ttft_ms_*, itl_ms_*, tps_*, request_latency_ms_*) will NOT differ meaningfully between values --
+# only tat_s_* (from the agent harness, which does pass --reasoning-effort through) reflects it.
+knob: reasoning_effort
+values: [off, high]
+model: Qwen/Qwen3.6-27B-FP8
+genai_perf_base_url: http://localhost:8000
+harness_base_url: http://localhost:8000/v1
+prometheus_url: http://localhost:9090
+fixed:
+  precision: fp8
+  kv_cache_strategy: paged_attention+prefix_caching
+  decoding_algorithm: greedy
+  concurrency: 4
+  isl_mean: 200
+  osl_mean: 200

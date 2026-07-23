@@ -1,0 +1,19 @@
+{
+  "knob": "concurrency",
+  "values": [1, 8],
+  "model": "Qwen/Qwen3.6-27B-FP8",
+  "genai_perf_base_url": "http://localhost:8000",
+  "harness_base_url": "http://localhost:8000/v1",
+  "prometheus_url": "http://localhost:9090",
+  "requests_per_concurrency": 10,
+  "warmup_requests": 2,
+  "harness_concurrency_cap": 16,
+  "fixed": {
+    "precision": "fp8",
+    "kv_cache_strategy": "paged_attention+prefix_caching",
+    "decoding_algorithm": "greedy",
+    "isl_mean": 200,
+    "osl_mean": 200,
+    "reasoning_effort": "off"
+  }
+}

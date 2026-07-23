@@ -1,0 +1,17 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "matrix",
+    "result": [
+      {
+        "metric": {"instance": "localhost:9400"},
+        "values": [
+          [1700000000, "20.0"],
+          [1700000005, "25.0"],
+          [1700000010, "30.0"],
+          [1700000015, "22.5"]
+        ]
+      }
+    ]
+  }
+}
